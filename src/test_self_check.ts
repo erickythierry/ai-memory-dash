@@ -246,6 +246,21 @@ try {
   assert(Array.isArray(halfScoped), 'workspace sem project deve cair na busca global, nao dar erro');
   console.log(`✅ GET /api/search: ${globalHits.length} global, ${scopedHits.length} restrito a ${target.project}`);
 
+  // 9e. Autocomplete de wikilink do editor: as duas partes puras vem do bundle.
+  // O alvo tem que ser o path sem `.md` — slug puro nao resolve e vira broken_link.
+  const wikiSrc = ['wikiOpenMatch', 'insertWikiLink']
+    .map(fn => bundle.match(new RegExp(`function ${fn}\\([\\s\\S]*?\\n\\}`))?.[0]);
+  assert(wikiSrc.every(Boolean), 'autocomplete de wikilink sumiu do bundle');
+  const wiki = new Function(`${wikiSrc.join(';')}; return { wikiOpenMatch, insertWikiLink };`)() as Json;
+  assert.deepStrictEqual(wiki.wikiOpenMatch('texto [[not'), { term: 'not', start: 6 });
+  assert.strictEqual(wiki.wikiOpenMatch('sem colchete'), null);
+  assert.strictEqual(wiki.wikiOpenMatch('[[ja fechado]] depois'), null, 'link ja fechado nao pode reabrir a lista');
+  assert.strictEqual(wiki.wikiOpenMatch('[[quebra\nlinha'), null, 'a busca nao atravessa linha');
+  const inserted = wiki.insertWikiLink('ver [[not aqui', 4, 9, 'notes/x.md');
+  assert.strictEqual(inserted.value, 'ver [[notes/x]] aqui');
+  assert.strictEqual(inserted.caret, 15, 'caret deve parar depois do ]]');
+  console.log('✅ Editor: autocomplete de wikilink insere o path sem .md');
+
   // 10. Sem CORS wildcard: rotas de escrita nao podem ser dirigidas por site externo
   const resCors = await get('/api/projects');
   assert.strictEqual(resCors.headers.get('access-control-allow-origin'), null,

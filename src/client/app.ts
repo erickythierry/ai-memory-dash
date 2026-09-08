@@ -39,6 +39,10 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     // Inicialização
     document.addEventListener('DOMContentLoaded', () => {
       loadProjects();
+      const ta = $area('editorTextarea');
+      ta.addEventListener('input', onEditorInput);
+      ta.addEventListener('keydown', onEditorKeydown);
+      ta.addEventListener('blur', closeWikiPopup);
     });
 
     function switchSidebarTab(tab: string) {
@@ -431,6 +435,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
       // Clicar numa pagina com o grafo aberto mostrava os dois painéis.
       closeGraph();
+      closeWikiPopup();
 
       if (mode === 'view') {
         btnView.className = 'px-2.5 py-1 text-xs rounded-md bg-blue-600 text-white font-medium';
@@ -1525,6 +1530,89 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       }
 
       await loadProjectPages();
+    }
+
+    // --- Autocomplete de wikilink no editor -------------------------------
+    // Digitar `[[` abre a lista das paginas do projeto (a mesma ja carregada na
+    // sidebar, sem request novo). O alvo do link e o path sem `.md`: slug puro
+    // nao resolve no ai-memory e vira broken_link no lint.
+    let wikiMatches: Json[] = [];
+    let wikiIndex = 0;
+    let wikiStart = -1; // posicao do `[[` que abriu a lista
+
+    function closeWikiPopup() {
+      wikiStart = -1;
+      wikiMatches = [];
+      $('wikiLinkPopup').classList.add('hidden');
+    }
+
+    function drawWikiPopup(term: string) {
+      const popup = $('wikiLinkPopup');
+      popup.classList.remove('hidden');
+      popup.innerHTML = wikiMatches.map((p: Json, i: number) => `
+        <div onmousedown="event.preventDefault(); applyWikiLink(${i})" class="px-3 py-2 cursor-pointer border-b border-slate-800/60 last:border-0 ${
+          i === wikiIndex ? 'bg-blue-600/20' : 'hover:bg-slate-900'
+        }">
+          <div class="text-slate-200 truncate">${escapeHtml(p.title || p.path)}</div>
+          <div class="text-[10px] font-mono text-slate-500 truncate">${escapeHtml(p.path)}</div>
+        </div>`).join('')
+        || `<div class="px-3 py-2 text-slate-500">Nenhuma página casa com "${escapeHtml(term)}"</div>`;
+      const active = popup.children[wikiIndex] as HTMLElement | undefined;
+      active?.scrollIntoView({ block: 'nearest' });
+    }
+
+    // Partes puras, separadas do DOM para poderem ser testadas no self-check.
+    function wikiOpenMatch(beforeCaret: string): { term: string; start: number } | null {
+      const open = beforeCaret.match(/\[\[([^\[\]\n]*)$/);
+      return open ? { term: open[1]!, start: beforeCaret.length - open[0].length } : null;
+    }
+
+    function insertWikiLink(value: string, start: number, caret: number, pagePath: string) {
+      const target = pagePath.replace(/\.md$/, '');
+      const before = value.slice(0, start);
+      return { value: `${before}[[${target}]]${value.slice(caret)}`, caret: before.length + target.length + 4 };
+    }
+
+    function applyWikiLink(i: number) {
+      const page = wikiMatches[i];
+      if (!page || wikiStart < 0) return;
+      const ta = $area('editorTextarea');
+      const next = insertWikiLink(ta.value, wikiStart, ta.selectionStart, String(page.path));
+      ta.value = next.value;
+      closeWikiPopup();
+      ta.focus();
+      ta.setSelectionRange(next.caret, next.caret);
+    }
+
+    function onEditorInput() {
+      const ta = $area('editorTextarea');
+      // `[[` mais o que foi digitado depois dele, sem passar de linha.
+      const open = wikiOpenMatch(ta.value.slice(0, ta.selectionStart));
+      if (!open) return closeWikiPopup();
+
+      const term = open.term.toLowerCase();
+      wikiStart = open.start;
+      wikiMatches = currentPagesList
+        .filter((p: Json) => !term
+          || String(p.path).toLowerCase().includes(term)
+          || String(p.title || '').toLowerCase().includes(term))
+        .slice(0, 8);
+      wikiIndex = 0;
+      drawWikiPopup(open.term);
+    }
+
+    function onEditorKeydown(e: KeyboardEvent) {
+      if (wikiStart < 0) return;
+      if (e.key === 'Escape') { closeWikiPopup(); e.preventDefault(); return; }
+      if (!wikiMatches.length) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        wikiIndex = (wikiIndex + (e.key === 'ArrowDown' ? 1 : wikiMatches.length - 1)) % wikiMatches.length;
+        drawWikiPopup('');
+        e.preventDefault();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        applyWikiLink(wikiIndex);
+        e.preventDefault();
+      }
     }
 
     function escapeHtml(text: string) {

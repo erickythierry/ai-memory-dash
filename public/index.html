@@ -299,13 +299,19 @@
 
         <!-- Edit Mode: Code / Markdown Editor -->
         <div id="docEditor" class="flex-1 flex flex-col overflow-hidden hidden">
-          <div class="flex-1 p-4 flex flex-col">
+          <div class="flex-1 p-4 flex flex-col relative">
+            <div class="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500">
+              <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m4.5-4.5l1.5-1.5a4 4 0 015.656 5.656l-3 3a4 4 0 01-5.656 0"></path></svg>
+              <span>Digite <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">[[</code> para linkar outra página do projeto — a lista filtra por título ou caminho, <kbd class="px-1 rounded bg-slate-800 text-slate-300">↑↓</kbd> navega, <kbd class="px-1 rounded bg-slate-800 text-slate-300">Enter</kbd> insere.</span>
+            </div>
             <textarea
               id="editorTextarea"
               class="w-full flex-1 bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-sm text-slate-200 focus:outline-none focus:border-blue-500 resize-none"
-              placeholder="# Título do documento..."
+              placeholder="# Título do documento... (digite [[ para linkar outra página)"
               spellcheck="false"
             ></textarea>
+            <!-- Autocomplete de wikilink: aberto ao digitar [[ no textarea -->
+            <div id="wikiLinkPopup" class="hidden absolute left-4 right-4 bottom-4 max-h-56 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/95 backdrop-blur shadow-xl z-20 text-xs"></div>
           </div>
           <div class="h-14 border-t border-slate-800 px-4 bg-slate-900/60 flex items-center justify-between shrink-0">
             <div class="flex items-center gap-4 text-xs text-slate-400">
