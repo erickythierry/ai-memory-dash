@@ -48,6 +48,10 @@
       border-radius: 6px;
       padding: 12px;
     }
+    /* O X nativo do input[type=search] no Chrome cai em cima do botao de lupa.
+       Some com ele: a lupa ocupa esse canto e Esc continua limpando o campo. */
+    input[type="search"]::-webkit-search-cancel-button,
+    input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
     .drop-active {
       border-color: #3b82f6 !important;
       background-color: rgba(59, 130, 246, 0.08) !important;
@@ -78,13 +82,15 @@
             id="searchInput"
             type="search"
             placeholder="Buscar páginas (FTS5)…"
-            class="w-44 sm:w-72 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            class="w-44 sm:w-72 rounded-lg border border-slate-700 bg-slate-900 pl-3 pr-8 py-1.5 text-xs text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
             onkeydown="if(event.key==='Enter') doSearch()"
           >
           <button onclick="doSearch()" class="absolute right-2 top-2 text-slate-400 hover:text-slate-200">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
           </button>
         </div>
+
+        <button id="searchScopeBtn" onclick="toggleSearchScope()" title="Alternar entre buscar em todos os projetos ou só no projeto aberto" class="hidden"></button>
 
         <a href="__AI_MEMORY_URL__/web" target="_blank" title="Abrir Dash Original" class="p-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200 text-xs flex items-center gap-1">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>

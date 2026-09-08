@@ -212,10 +212,19 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 3. GET /api/search?q=...
+    // 3. GET /api/search?q=...&workspace=...&project=...&limit=...
     if (pathname === '/api/search' && req.method === 'GET') {
       const q = parsedUrl.searchParams.get('q') || '';
-      const results = await fetchApiV1(`/search?q=${encodeURIComponent(q)}`);
+      const workspace = parsedUrl.searchParams.get('workspace');
+      const project = parsedUrl.searchParams.get('project');
+      // O default do upstream e 10, curto demais para uma tela de resultados.
+      const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+
+      // workspace e project so valem juntos: o upstream recusa um sem o outro.
+      const scope = workspace && project
+        ? `&workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`
+        : '';
+      const results = await fetchApiV1(`/search?q=${encodeURIComponent(q)}&limit=${limit}${scope}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(results));
       return;

@@ -232,6 +232,20 @@ try {
   assert(bundle.includes('function setHandoffFilter('), 'filtro de estado dos handoffs sumiu do bundle');
   console.log('✅ Handoffs: titulo derivado do summary e filtro por estado presentes');
 
+  // 9d. Busca com escopo: workspace+project so valem juntos no upstream, e o
+  // limite default de 10 dele era curto demais para a tela de resultados.
+  const searchTerm = String(target.pages[0].title || '').split(/\s+/).find((w: string) => w.length > 4) || 'memory';
+  const globalHits: Json[] = await getJson(`/api/search?${q({ q: searchTerm })}`);
+  const scopedHits: Json[] = await getJson(`/api/search?${q({ q: searchTerm, workspace: target.workspace, project: target.project })}`);
+  assert(Array.isArray(globalHits) && Array.isArray(scopedHits), 'busca deve devolver array');
+  assert(scopedHits.every((r: Json) => r.project === target.project),
+    `busca com escopo vazou para outros projetos: ${[...new Set(scopedHits.map((r: Json) => r.project))].join(', ')}`);
+  assert(scopedHits.length <= globalHits.length, 'busca com escopo nao pode trazer mais que a global');
+  // workspace sem project e recusado pelo upstream; a dash tem que ignorar o par incompleto.
+  const halfScoped: Json[] = await getJson(`/api/search?${q({ q: searchTerm, workspace: target.workspace })}`);
+  assert(Array.isArray(halfScoped), 'workspace sem project deve cair na busca global, nao dar erro');
+  console.log(`✅ GET /api/search: ${globalHits.length} global, ${scopedHits.length} restrito a ${target.project}`);
+
   // 10. Sem CORS wildcard: rotas de escrita nao podem ser dirigidas por site externo
   const resCors = await get('/api/projects');
   assert.strictEqual(resCors.headers.get('access-control-allow-origin'), null,

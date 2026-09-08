@@ -635,20 +635,47 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       }
     }
 
-    // Busca FTS5
+    // Busca FTS5. O escopo so existe com um projeto aberto; ao voltar para a
+    // lista de projetos a busca volta a ser global.
+    let searchScopeProject = false;
+
+    function toggleSearchScope() {
+      searchScopeProject = !searchScopeProject;
+      updateSearchScopeBtn();
+      if ($input('searchInput').value.trim()) doSearch();
+    }
+
+    function updateSearchScopeBtn() {
+      const btn = $('searchScopeBtn');
+      if (!currentProject) {
+        searchScopeProject = false;
+        btn.classList.add('hidden');
+        return;
+      }
+      btn.classList.remove('hidden');
+      btn.innerText = searchScopeProject ? `só em ${currentProject}` : 'todos os projetos';
+      btn.className = searchScopeProject
+        ? 'shrink-0 px-2 py-1 rounded-lg border text-[10px] font-medium transition max-w-[10rem] truncate bg-blue-600 border-blue-500 text-white'
+        : 'shrink-0 px-2 py-1 rounded-lg border text-[10px] font-medium transition max-w-[10rem] truncate bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200';
+    }
+
     async function doSearch() {
       const q = $input('searchInput').value.trim();
       if (!q) return;
 
+      const scope = searchScopeProject && currentProject
+        ? `&workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}`
+        : '';
+
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}${scope}`);
         const results = await res.json();
 
         $('projectsView').classList.add('hidden');
         $('projectDetailView').classList.add('hidden');
         $('searchView').classList.remove('hidden');
 
-        $('searchQueryLabel').innerText = q;
+        $('searchQueryLabel').innerText = scope ? `${q} (em ${currentProject})` : q;
         renderSearchResults(results);
       } catch (err) {
         alert('Erro na busca: ' + errMsg(err));
@@ -685,6 +712,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     }
 
     function updateBreadcrumb() {
+      updateSearchScopeBtn();
       const b = $('breadcrumb');
       if (!currentProject) {
         b.innerHTML = '';
