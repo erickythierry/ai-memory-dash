@@ -217,7 +217,15 @@ try {
   const openEnd = openBody.indexOf('\n    }');
   assert(/docHeader'\)\.classList\.add\('hidden'\)/.test(openBody.slice(0, openEnd)),
     'abrir o grafo precisa esconder docHeader: o botao Deletar agiria na doc anterior');
-  console.log('✅ Toda troca de tela fecha o grafo, descarta os dados e esconde a barra da doc');
+  // Reabrir o grafo do mesmo projeto nao pode re-simular: a animacao de entrada
+  // vale uma vez, repetida a cada reabertura vira ruido. E fechar tem que apagar
+  // o desenho, senao o grafo antigo pisca antes do fetch novo.
+  const closeBody = app.slice(app.indexOf('function closeGraph()'));
+  assert(/graphSvg'\)\.innerHTML = ''/.test(closeBody.slice(0, closeBody.indexOf('\n    }'))),
+    'closeGraph precisa limpar o svg: senao o grafo anterior reaparece ao abrir');
+  assert(app.includes('const restored = !!cached && nodes.every'),
+    'o grafo perdeu o reaproveitamento do layout ja assentado');
+  console.log('✅ Toda troca de tela fecha o grafo, limpa o desenho e reusa o layout ja assentado');
 
   // 9c. Titulo do handoff: a lista mostrava so o nome do agente, igual em todos.
   // Extrai a funcao do bundle e testa a derivacao a partir do summary.
@@ -260,6 +268,47 @@ try {
   assert.strictEqual(inserted.value, 'ver [[notes/x]] aqui');
   assert.strictEqual(inserted.caret, 15, 'caret deve parar depois do ]]');
   console.log('✅ Editor: autocomplete de wikilink insere o path sem .md');
+
+  // 9f. Rotas reais: a URL tem que sobreviver a um reload. Testa o ida-e-volta
+  // entre buildUrl (estado -> URL) e parseRoute (URL -> estado), e o fallback
+  // do servidor que devolve o index em qualquer caminho da SPA.
+  const grab = (name: string) => bundle.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))?.[0];
+  const buildUrlSrc = grab('buildUrl');
+  const parseRouteSrc = grab('parseRoute');
+  assert(buildUrlSrc && parseRouteSrc, 'roteador sumiu do bundle');
+  const buildUrl = (st: Json) => new Function('st',
+    `let {currentWorkspace,currentProject,currentDocPath,currentSessionId,currentActiveTab,currentDocMode}=st; ${buildUrlSrc}; return buildUrl();`)(st) as string;
+  const parseRoute = new Function(`${parseRouteSrc}; return parseRoute;`)() as (p: string, q: string) => Json;
+
+  const states: Json[] = [
+    { currentWorkspace: 'default', currentProject: null, currentDocPath: null, currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'view' },
+    { currentWorkspace: 'default', currentProject: 'sendflow', currentDocPath: null, currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'view' },
+    { currentWorkspace: 'default', currentProject: 'sendflow', currentDocPath: null, currentSessionId: null, currentActiveTab: 'handoffs', currentDocMode: 'view' },
+    { currentWorkspace: 'default', currentProject: 'sendflow', currentDocPath: 'notes/a b/ç.md', currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'edit' },
+    { currentWorkspace: 'default', currentProject: 'x', currentDocPath: null, currentSessionId: 'abc-123', currentActiveTab: 'docs', currentDocMode: 'view' }
+  ];
+  for (const st of states) {
+    const [pathPart, queryPart = ''] = buildUrl(st).split('?');
+    const back = parseRoute(pathPart!, queryPart);
+    if (!st.currentProject) { assert.strictEqual(back.view, 'projects'); continue; }
+    assert.strictEqual(back.project, st.currentProject);
+    assert.strictEqual(back.workspace, st.currentWorkspace);
+    assert.strictEqual(back.docPath, st.currentDocPath, 'path da doc nao sobreviveu ao round-trip');
+    assert.strictEqual(back.sessionId, st.currentSessionId);
+    assert.strictEqual(back.tab, st.currentActiveTab);
+    assert.strictEqual(back.edit, st.currentDocMode === 'edit');
+  }
+  assert.strictEqual(parseRoute('/rota/invalida', '').view, 'projects', 'rota desconhecida deve cair na home');
+
+  // Fallback do servidor: sem ele, recarregar numa doc daria 404.
+  for (const route of ['/p/default/sendflow', '/p/default/sendflow/doc/notes/foo.md', '/search?q=x']) {
+    const r = await fetch(BASE + route);
+    assert.strictEqual(r.status, 200, `rota ${route} deveria devolver o index`);
+    assert((r.headers.get('content-type') || '').includes('text/html'), `rota ${route} deveria ser HTML`);
+  }
+  const missingApi = await fetch(`${BASE}/api/naoexiste`);
+  assert.strictEqual(missingApi.status, 404, 'rota /api/ desconhecida nao pode cair no fallback da SPA');
+  console.log('✅ Rotas: URL sobrevive ao reload e o servidor devolve o index nas rotas da SPA');
 
   // 10. Sem CORS wildcard: rotas de escrita nao podem ser dirigidas por site externo
   const resCors = await get('/api/projects');

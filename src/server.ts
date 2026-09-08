@@ -143,8 +143,14 @@ const server = http.createServer(async (req, res) => {
   // aberto no navegador apagar paginas via fetch.
 
   try {
-    // 1. Static frontend
-    if (pathname === '/' || pathname === '/index.html') {
+    // 1. Static frontend. A SPA tem rotas reais (/p/<ws>/<proj>/doc/...), entao
+    // qualquer GET que nao seja /api/ nem /static/ devolve o index e o roteador
+    // do cliente resolve o caminho — sem isso, recarregar a pagina daria 404.
+    const isAppRoute = req.method === 'GET'
+      && !pathname.startsWith('/api/')
+      && !pathname.startsWith('/static/');
+
+    if (pathname === '/' || pathname === '/index.html' || isAppRoute) {
       const htmlPath = path.join(ROOT, 'public', 'index.html');
       const html = fs.readFileSync(htmlPath, 'utf8')
         .replaceAll('__AI_MEMORY_URL__', AI_MEMORY_URL);

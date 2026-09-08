@@ -33,12 +33,124 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     let currentDocData: Json = null;
     let currentPagesList: Json[] = [];
     let currentActiveTab = 'docs'; // 'docs' ou 'history'
+    let currentDocMode: 'view' | 'edit' = 'view';
     let currentHistoryData: Json = null;
     let currentSessionId: string | null = null;
+
+    // --- Rotas ------------------------------------------------------------
+    // A URL e derivada do estado, num lugar so: cada acao chama syncUrl() e o
+    // caminho sai de currentProject/currentDocPath/etc. Recarregar a pagina faz
+    // o inverso — applyRoute() reexecuta as mesmas funcoes de navegacao.
+    // `routing` silencia syncUrl durante o replay, senao cada passo do replay
+    // empilharia uma entrada no historico.
+    let routing = false;
+
+    function buildUrl(): string {
+      if (!currentProject) return '/';
+      const base = `/p/${encodeURIComponent(currentWorkspace)}/${encodeURIComponent(currentProject)}`;
+      const qs = new URLSearchParams();
+      if (currentActiveTab !== 'docs') qs.set('tab', currentActiveTab);
+
+      let path = base;
+      if (currentDocPath) {
+        path = `${base}/doc/${currentDocPath.split('/').map(encodeURIComponent).join('/')}`;
+        if (currentDocMode === 'edit') qs.set('edit', '1');
+      } else if (currentSessionId) {
+        path = `${base}/session/${encodeURIComponent(currentSessionId)}`;
+      }
+      const q = qs.toString();
+      return q ? `${path}?${q}` : path;
+    }
+
+    function syncUrl(replace = false) {
+      if (routing) return;
+      const url = buildUrl();
+      if (url === location.pathname + location.search) return;
+      history[replace ? 'replaceState' : 'pushState']({}, '', url);
+    }
+
+    // Busca tem URL propria: nao deriva do estado de projeto/doc.
+    function syncSearchUrl(q: string, scoped: boolean) {
+      if (routing) return;
+      const qs = new URLSearchParams({ q });
+      if (scoped && currentProject) {
+        qs.set('workspace', currentWorkspace);
+        qs.set('project', currentProject);
+      }
+      history.pushState({}, '', `/search?${qs}`);
+    }
+
+    // Parse puro do caminho, separado do DOM: e o inverso de buildUrl e o
+    // self-check testa o ida-e-volta dos dois.
+    function parseRoute(pathname: string, search: string) {
+      const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
+      const qs = new URLSearchParams(search);
+      if (parts[0] === 'search') {
+        return { view: 'search', q: qs.get('q') || '', workspace: qs.get('workspace'), project: qs.get('project') };
+      }
+      if (parts[0] !== 'p' || !parts[1] || !parts[2]) return { view: 'projects' };
+      return {
+        view: 'project',
+        workspace: parts[1],
+        project: parts[2],
+        tab: qs.get('tab') === 'history' || qs.get('tab') === 'handoffs' ? qs.get('tab') : 'docs',
+        docPath: parts[3] === 'doc' && parts.length > 4 ? parts.slice(4).join('/') : null,
+        sessionId: parts[3] === 'session' && parts[4] ? parts[4] : null,
+        edit: qs.get('edit') === '1'
+      } as Json;
+    }
+
+    async function applyRoute() {
+      routing = true;
+      try {
+        const r = parseRoute(location.pathname, location.search) as Json;
+
+        if (r.view === 'search') {
+          const q = r.q;
+          $input('searchInput').value = q;
+          const ws = r.workspace;
+          const pr = r.project;
+          if (ws && pr) {
+            // Escopo veio na URL: abre o projeto antes, para o botao e o
+            // breadcrumb ficarem coerentes com o resultado exibido.
+            await openProject(ws, pr);
+            searchScopeProject = true;
+            updateSearchScopeBtn();
+          }
+          if (q) await doSearch();
+          return;
+        }
+
+        if (r.view !== 'project') {
+          goToProjects();
+          return;
+        }
+
+        await openProject(r.workspace, r.project);
+        if (r.tab !== 'docs') switchSidebarTab(r.tab);
+
+        if (r.docPath) {
+          await loadDoc(r.docPath);
+          if (r.edit) setDocMode('edit');
+        } else if (r.sessionId) {
+          // A sessao bruta so tem seus metadados na listagem; espera o
+          // historico carregar para abrir com agente/cwd/inicio preenchidos.
+          await loadProjectHistory();
+          const sess = (currentHistoryData?.sessions || []).find((x: Json) => x.session_id === r.sessionId);
+          if (sess) openSession(sess);
+          else openRawSessionDetail({ session_id: r.sessionId });
+        }
+      } finally {
+        routing = false;
+        syncUrl(true); // normaliza a URL (rota invalida vira o estado real)
+      }
+    }
 
     // Inicialização
     document.addEventListener('DOMContentLoaded', () => {
       loadProjects();
+      applyRoute();
+      window.addEventListener('popstate', applyRoute);
       const ta = $area('editorTextarea');
       ta.addEventListener('input', onEditorInput);
       ta.addEventListener('keydown', onEditorKeydown);
@@ -47,6 +159,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
     function switchSidebarTab(tab: string) {
       currentActiveTab = tab;
+      syncUrl();
       const tabBtnDocs = $('tabBtnDocs');
       const tabBtnHistory = $('tabBtnHistory');
       const tabBtnHandoffs = $('tabBtnHandoffs');
@@ -152,6 +265,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       currentSessionId = null;
       closeGraph();
       updateBreadcrumb();
+      syncUrl();
     }
 
     async function openProject(workspace: string, project: string) {
@@ -175,6 +289,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       $('docHeader').classList.add('hidden');
       renderRecentActivityPlaceholder();
 
+      syncUrl();
       await loadProjectPages();
       renderRecentActivityView();
       loadProjectHistory(); // Carrega contagem do histórico em background
@@ -390,8 +505,10 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
     async function loadDoc(docPath: string) {
       currentDocPath = docPath;
+      currentSessionId = null;
       renderSidebarPages(currentPagesList); // re-render para atualizar classe ativa
       updateBreadcrumb();
+      syncUrl();
 
       try {
         const res = await fetch(`/api/page?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject!)}&path=${encodeURIComponent(docPath)}`);
@@ -427,6 +544,8 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     }
 
     function setDocMode(mode: 'view' | 'edit') {
+      currentDocMode = mode;
+      syncUrl();
       const btnView = $('btnViewMode');
       const btnEdit = $('btnEditMode');
       const docViewer = $('docViewer');
@@ -672,6 +791,8 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         ? `&workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}`
         : '';
 
+      syncSearchUrl(q, !!scope);
+
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}${scope}`);
         const results = await res.json();
@@ -745,6 +866,22 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     // Trocar por quadtree/d3-force so se algum projeto passar de uns 500 nos.
     let graphData: Json = null;
     let graphSim: number | null = null;
+    // Layout ja assentado, por projeto: reabrir o grafo do mesmo projeto
+    // restaura as posicoes em vez de re-simular. A animacao de entrada vale
+    // uma vez; repetida a cada reabertura vira ruido.
+    let graphLayout: { key: string; pos: Record<string, { x: number; y: number }> } | null = null;
+    let graphNodesRef: Json[] = [];
+
+    const graphKey = () => `${currentWorkspace}/${currentProject}`;
+
+    function saveGraphLayout() {
+      if (!graphNodesRef.length) return;
+      const pos: Record<string, { x: number; y: number }> = {};
+      for (const n of graphNodesRef) {
+        if (typeof n.x === 'number' && typeof n.y === 'number') pos[n.id] = { x: n.x, y: n.y };
+      }
+      graphLayout = { key: graphKey(), pos };
+    }
 
     const KIND_COLORS: Record<string, string> = {
       decision: '#f59e0b', gotcha: '#f43f5e', concept: '#8b5cf6', fact: '#22d3ee',
@@ -861,6 +998,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
     function stopGraph() {
       if (graphSim) { cancelAnimationFrame(graphSim); graphSim = null; }
+      saveGraphLayout(); // fechar no meio da simulacao tambem guarda o que ja tem
     }
 
     // Fecha o grafo e descarta os dados. Chamada de todo ponto que troca o que
@@ -869,7 +1007,11 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     function closeGraph() {
       stopGraph();
       graphData = null;
+      graphNodesRef = [];
       const panel = $('graphView');
+      // Limpa o desenho: sem isso o grafo antigo reaparecia por um instante ao
+      // reabrir, antes do fetch novo terminar.
+      $('graphSvg').innerHTML = '';
       if (!panel || panel.classList.contains('hidden')) return;
       panel.classList.add('hidden');
       panel.classList.remove('flex');
@@ -914,14 +1056,23 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         return;
       }
 
-      // Posicao inicial em circulo: converge mais rapido e evita o empurrao
-      // caotico de comecar todo mundo no mesmo ponto.
+      // Layout guardado deste mesmo projeto cobre todos os nos? Entao entra
+      // pronto, sem simular. Senao, posicao inicial em circulo: converge mais
+      // rapido e evita o empurrao caotico de comecar todo mundo no mesmo ponto.
+      const cached = graphLayout && graphLayout.key === graphKey() ? graphLayout.pos : null;
+      const restored = !!cached && nodes.every((n: Json) => cached[n.id]);
+
       nodes.forEach((n: Json, i: number) => {
-        const a = (i / nodes.length) * Math.PI * 2;
-        n.x = W / 2 + Math.cos(a) * Math.min(W, H) * 0.35;
-        n.y = H / 2 + Math.sin(a) * Math.min(W, H) * 0.35;
+        if (restored) {
+          n.x = cached![n.id]!.x; n.y = cached![n.id]!.y;
+        } else {
+          const a = (i / nodes.length) * Math.PI * 2;
+          n.x = W / 2 + Math.cos(a) * Math.min(W, H) * 0.35;
+          n.y = H / 2 + Math.sin(a) * Math.min(W, H) * 0.35;
+        }
         n.vx = 0; n.vy = 0;
       });
+      graphNodesRef = nodes;
 
       const radius = (n: Json) => 4 + Math.min(n.degree, 8);
 
@@ -1023,10 +1174,22 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
           graphSim = requestAnimationFrame(tick);
         } else {
           graphSim = null;
+          saveGraphLayout();
           fitGraph();   // layout assentou: enquadra o resultado
         }
       };
-      tick();
+
+      if (restored) {
+        // Desenha uma vez nas posicoes guardadas e para por aqui.
+        edges.forEach((e: Json, i: number) => {
+          edgeEls[i].setAttribute('x1', e.source.x); edgeEls[i].setAttribute('y1', e.source.y);
+          edgeEls[i].setAttribute('x2', e.target.x); edgeEls[i].setAttribute('y2', e.target.y);
+        });
+        nodes.forEach((n: Json, i: number) => nodeEls[i].setAttribute('transform', `translate(${n.x},${n.y})`));
+        fitGraph();
+      } else {
+        tick();
+      }
     }
 
     // Histórico de Sessões
@@ -1117,6 +1280,8 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       await loadDoc(sessionDoc.path);
       const sessionId = sessionDoc.path.replace('sessions/', '').replace('.md', '');
       currentSessionId = sessionId;
+      // loadDoc ja colocou /doc/sessions/<id>.md na URL; a sessao consolidada
+      // e uma pagina como outra qualquer, entao a URL do doc e a canonica.
       loadSessionObservations(sessionId);
     }
 
@@ -1125,6 +1290,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       currentDocPath = null;
       currentDocData = null;
       updateBreadcrumb();
+      syncUrl();
 
       $('docHeader').classList.remove('hidden');
       $('docActions').classList.add('hidden');
