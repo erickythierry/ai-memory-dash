@@ -1,0 +1,11 @@
+services:
+  dash:
+    build: .
+    container_name: ai-memory-dash
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+    # ponytail: bind so no loopback - a dash carrega o token e nao tem auth propria
+    ports:
+      - "127.0.0.1:3838:3838"

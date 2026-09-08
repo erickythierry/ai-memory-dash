@@ -43,6 +43,23 @@ npm start
 
 Abre em <http://127.0.0.1:3838>.
 
+### Docker
+
+```bash
+cp .env.example .env
+$EDITOR .env
+docker compose up -d
+```
+
+O `.env` é lido pelo compose (`env_file`), e `HOST` é forçado para `0.0.0.0` dentro
+do container — a porta é publicada só em `127.0.0.1:3838`, então continua fora da rede.
+
+`restart: unless-stopped` faz o container subir junto com o daemon do Docker, ou seja,
+junto com o sistema. Para desligar de vez: `docker compose down`.
+
+Se o seu ai-memory rodar em `localhost` da própria máquina, `AI_MEMORY_URL` precisa
+apontar para `http://host.docker.internal:PORTA` (ou use `network_mode: host`).
+
 ## Configuração
 
 | Variável | Padrão | Para quê |
