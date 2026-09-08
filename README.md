@@ -28,6 +28,8 @@ ai-memory pela API pública dela. O projeto original fica intacto.
 ## Requisitos
 
 - Node.js 18+ (usa `fetch` nativo e `node:` imports).
+- Código em TypeScript: `npm run build` compila `src/` para `dist/` (servidor) e
+  `public/static/app.js` (frontend). `npm start` já roda o build antes de subir.
 - Uma instância do ai-memory acessível, com um token bearer.
 
 ## Instalação
@@ -69,7 +71,7 @@ apontar para `http://host.docker.internal:PORTA` (ou use `network_mode: host`).
 | `PORT` | `3838` | Porta local. |
 | `HOST` | `127.0.0.1` | Interface de bind. Leia a seção de segurança antes de mudar. |
 
-O `.env` é lido por um parser de 10 linhas no próprio `server.js` — variáveis de
+O `.env` é lido por um parser de 10 linhas no próprio `src/server.ts` — variáveis de
 ambiente já definidas têm precedência sobre o arquivo. Sem `dotenv`.
 
 ## Segurança
@@ -180,7 +182,7 @@ correta é `GET /api/v1/workspaces/{ws}/projects/{proj}/handoffs`, que lista tod
 estados sem efeito colateral — é o que esta dash usa, e o self-check trava se alguém
 voltar ao endpoint destrutivo.
 
-Uma nota sobre limites: `PAGE_LIMIT = 500` no `server.js`. O upstream aceita esse
+Uma nota sobre limites: `PAGE_LIMIT = 500` no `src/server.ts`. O upstream aceita esse
 valor sem cap e suporta `offset`, então paginação de verdade é fácil de adicionar —
 só não vale a complexidade enquanto nenhum projeto chegar perto disso. O self-check
 falha quando um projeto bate no teto, para você não descobrir por um zip incompleto.
@@ -188,19 +190,24 @@ falha quando um projeto bate no teto, para você não descobrir por um zip incom
 ## Testes
 
 ```bash
-node test_self_check.js
+npm run selfcheck            # compila e roda
+PORT=3839 npm run selfcheck  # se a 3838 já estiver ocupada
+npm run typecheck            # só o tsc, sem subir nada
 ```
 
 Roda de ponta a ponta contra a sua instância: descobre projetos e páginas em runtime,
-então funciona em qualquer servidor. Sobe o `server.js` sozinho se ele não estiver de pé.
+então funciona em qualquer servidor. Sobe o `dist/server.js` sozinho se ele não estiver de pé.
 Não escreve nada além de um sinal de feedback `helpful` numa página existente.
 
 ## Estrutura
 
 ```
-server.js            # servidor HTTP, proxy MCP e rotas da API
-public/index.html    # SPA inteira em um arquivo
-test_self_check.js   # self-check de ponta a ponta
+src/server.ts          # servidor HTTP, proxy MCP e rotas da API
+src/client/app.ts      # frontend (compila para public/static/app.js)
+src/test_self_check.ts # self-check de ponta a ponta
+public/index.html      # markup da SPA, carrega /static/app.js
+tsconfig.json          # build do servidor  -> dist/
+tsconfig.client.json   # build do frontend  -> public/static/app.js
 ```
 
 Dependência única: `archiver`. O resto é stdlib do Node.

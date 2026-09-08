@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "outDir": "public/static",
+    "rootDir": "src/client",
+    "sourceMap": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/client/**/*.ts"]
+}

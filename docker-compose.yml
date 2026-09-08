@@ -10,6 +10,8 @@ services:
     ports:
       - "127.0.0.1:3838:3838"
     volumes:
-      - ./server.js:/app/server.js:ro
+      # dist/ e public/static/app.js sao gerados por `npm run build` no host;
+      # montar os dois deixa recarregar sem rebuild da imagem.
+      - ./dist:/app/dist:ro
       - ./public:/app/public:ro
 

@@ -3,3 +3,5 @@ node_modules
 dist
 .DS_Store
 *.log
+public/static/app.js
+public/static/app.js.map

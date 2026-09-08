@@ -2,5 +2,7 @@ node_modules
 .git
 .env
 *.log
-test_self_check.js
 README.md
+dist
+public/static/app.js
+public/static/app.js.map

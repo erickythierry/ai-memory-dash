@@ -3,12 +3,20 @@
   "version": "1.0.0",
   "description": "Sidecar dashboard para o ai-memory com visualização, edição, deleção e download",
   "type": "module",
-  "main": "server.js",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "start": "npm run build && node dist/server.js",
+    "dev": "tsc -p tsconfig.client.json --watch & tsc -p tsconfig.json --watch --preserveWatchOutput & node --watch dist/server.js",
+    "selfcheck": "npm run build && node dist/test_self_check.js"
   },
   "dependencies": {
     "archiver": "^7.0.1"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.4",
+    "@types/node": "^26.5.0",
+    "typescript": "^7.0.2"
   }
 }

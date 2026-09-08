@@ -6,18 +6,26 @@ import archiver from 'archiver';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// dist/server.js roda de dentro de dist/, entao a raiz do projeto fica um nivel acima.
+const ROOT = path.resolve(__dirname, '..');
+
+// Respostas do ai-memory: JSON dinamico de um servico externo, sem schema
+// publicado. Tipar campo a campo aqui so criaria um contrato falso.
+type Json = any;
+
+interface HealthMap extends Map<string, string[]> {}
 
 // Carrega .env simples sem dependência externa
-function loadEnv() {
-  const envPath = path.join(__dirname, '.env');
+function loadEnv(): void {
+  const envPath = path.join(ROOT, '.env');
   if (fs.existsSync(envPath)) {
     const lines = fs.readFileSync(envPath, 'utf8').split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
         const [k, ...v] = trimmed.split('=');
-        if (!process.env[k.trim()]) {
-          process.env[k.trim()] = v.join('=').trim();
+        if (!process.env[k!.trim()]) {
+          process.env[k!.trim()] = v.join('=').trim();
         }
       }
     }
@@ -42,7 +50,7 @@ const PAGE_LIMIT = 500;
 let mcpReqId = 0;
 
 // Helper para chamar ferramentas MCP do ai-memory
-async function mcpCall(name, args) {
+async function mcpCall(name: string, args: Record<string, unknown>): Promise<Json> {
   mcpReqId++;
   const mcpUrl = AI_MEMORY_URL.endsWith('/mcp') ? AI_MEMORY_URL : `${AI_MEMORY_URL}/mcp`;
   const res = await fetch(mcpUrl, {
@@ -66,7 +74,7 @@ async function mcpCall(name, args) {
     throw new Error(`MCP error ${res.status}: ${txt}`);
   }
 
-  const data = await res.json();
+  const data = await res.json() as Json;
   if (data.error) {
     throw new Error(data.error.message || JSON.stringify(data.error));
   }
@@ -82,7 +90,7 @@ async function mcpCall(name, args) {
 }
 
 // Proxy para a API v1 do ai-memory (projects, search, etc.)
-async function fetchApiV1(subpath) {
+async function fetchApiV1(subpath: string): Promise<Json> {
   const url = `${AI_MEMORY_URL}/api/v1${subpath}`;
   const res = await fetch(url, {
     headers: {
@@ -93,18 +101,18 @@ async function fetchApiV1(subpath) {
   if (!res.ok) {
     throw new Error(`Upstream API v1 error ${res.status}`);
   }
-  return res.json();
+  return res.json() as Promise<Json>;
 }
 
 // Mapa path -> ['orphan'|'stale'|'duplicate'], para marcar as paginas na lista.
 // Falha aqui nao pode derrubar a listagem: sem saude, so nao ha marcador.
-async function healthByPath(workspace, project) {
-  const map = new Map();
+async function healthByPath(workspace: string, project: string): Promise<HealthMap> {
+  const map: HealthMap = new Map();
   try {
-    const ov = await fetchApiV1(
+    const ov: Json = await fetchApiV1(
       `/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/overview?limit=${PAGE_LIMIT}`
     );
-    const buckets = {
+    const buckets: Record<string, Json[] | undefined> = {
       orphan: ov?.health?.orphan_pages,
       stale: ov?.health?.stale_pages,
       duplicate: ov?.health?.duplicate_pages
@@ -116,13 +124,18 @@ async function healthByPath(workspace, project) {
       }
     }
   } catch (e) {
-    console.error(`saude de ${project} indisponivel:`, e.message);
+    console.error(`saude de ${project} indisponivel:`, errMsg(e));
   }
   return map;
 }
 
+// Erro em catch e `unknown` no TS; so queremos a mensagem para log e resposta.
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 const server = http.createServer(async (req, res) => {
-  const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
+  const parsedUrl = new URL(req.url || '/', `http://${req.headers.host}`);
   const pathname = parsedUrl.pathname;
 
   // ponytail: sem CORS de proposito - o frontend e same-origin e as rotas
@@ -132,7 +145,7 @@ const server = http.createServer(async (req, res) => {
   try {
     // 1. Static frontend
     if (pathname === '/' || pathname === '/index.html') {
-      const htmlPath = path.join(__dirname, 'public', 'index.html');
+      const htmlPath = path.join(ROOT, 'public', 'index.html');
       const html = fs.readFileSync(htmlPath, 'utf8')
         .replaceAll('__AI_MEMORY_URL__', AI_MEMORY_URL);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -141,10 +154,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname.startsWith('/static/')) {
-      const filePath = path.join(__dirname, 'public', pathname);
+      const filePath = path.join(ROOT, 'public', pathname);
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath).toLowerCase();
-        const mimeTypes = {
+        const mimeTypes: Record<string, string> = {
           '.css': 'text/css',
           '.js': 'application/javascript',
           '.png': 'image/png',
@@ -159,15 +172,15 @@ const server = http.createServer(async (req, res) => {
 
     // 2. GET /api/projects
     if (pathname === '/api/projects' && req.method === 'GET') {
-      const projects = await fetchApiV1('/projects');
+      const projects: Json[] = await fetchApiV1('/projects');
 
       // O /projects do upstream so traz page_count e last_updated. O /overview de
       // cada projeto traz sessoes, observacoes, handoffs e saude numa chamada so,
       // entao enriquece em paralelo. Um projeto que falhe vira stats null em vez
       // de derrubar a listagem inteira.
-      const enriched = await Promise.all((projects || []).map(async (p) => {
+      const enriched = await Promise.all((projects || []).map(async (p: Json) => {
         try {
-          const ov = await fetchApiV1(
+          const ov: Json = await fetchApiV1(
             `/workspaces/${encodeURIComponent(p.workspace_name)}/projects/${encodeURIComponent(p.project_name)}/overview`
           );
           const counts = ov?.briefing?.counts || {};
@@ -189,7 +202,7 @@ const server = http.createServer(async (req, res) => {
             }
           };
         } catch (e) {
-          console.error(`overview de ${p.project_name} falhou:`, e.message);
+          console.error(`overview de ${p.project_name} falhou:`, errMsg(e));
           return { ...p, stats: null };
         }
       }));
@@ -227,8 +240,8 @@ const server = http.createServer(async (req, res) => {
         fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages?limit=${PAGE_LIMIT}`).catch(() => [])
       ]);
 
-      const v1Map = new Map((Array.isArray(v1Listing) ? v1Listing : []).map(p => [p.path, p]));
-      const hits = (data?.hits || []).map(h => {
+      const v1Map = new Map<string, Json>((Array.isArray(v1Listing) ? v1Listing : []).map((p: Json) => [p.path, p]));
+      const hits = (data?.hits || []).map((h: Json) => {
         const v1 = v1Map.get(h.path) || {};
         return {
           ...h,
@@ -274,19 +287,19 @@ const server = http.createServer(async (req, res) => {
       // Os links so existem na pagina inteira: nem a listagem nem o /graph do
       // upstream (que e so cross-project) os trazem. Entao busca cada pagina em
       // paralelo — 77 paginas levam ~300ms.
-      const listing = await fetchApiV1(
+      const listing: Json = await fetchApiV1(
         `/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages`
       );
-      const paths = (Array.isArray(listing) ? listing : listing?.pages || []);
+      const paths: Json[] = (Array.isArray(listing) ? listing : listing?.pages || []);
 
-      const pages = await Promise.all(paths.map(p =>
+      const pages: Json[] = await Promise.all(paths.map((p: Json) =>
         fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages/${p.path}`)
           .catch(() => null)
       ));
 
       const health = await healthByPath(workspace, project);
-      const nodes = new Map();
-      const key = (ws, pr, pa) => `${ws}/${pr}/${pa}`;
+      const nodes = new Map<string, Json>();
+      const key = (ws: string, pr: string, pa: string) => `${ws}/${pr}/${pa}`;
 
       for (const p of paths) {
         nodes.set(key(workspace, project, p.path), {
@@ -301,7 +314,7 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const edges = [];
+      const edges: { from: string; to: string }[] = [];
       for (const page of pages) {
         if (!page?.links) continue;
         const from = key(page.workspace, page.project, page.path);
@@ -324,8 +337,8 @@ const server = http.createServer(async (req, res) => {
             });
           }
           edges.push({ from, to });
-          nodes.get(from).degree++;
-          nodes.get(to).degree++;
+          nodes.get(from)!.degree++;
+          nodes.get(to)!.degree++;
         }
       }
 
@@ -348,7 +361,7 @@ const server = http.createServer(async (req, res) => {
       // observation_count, consolidada em pagina wiki ou nao. Antes isto filtrava
       // memory_recent por 'sessions/', entao sessao sem pagina — justamente onde
       // ficam as observacoes ainda nao consolidadas — sumia da tela.
-      const [listing, recent, briefing] = await Promise.all([
+      const [listing, recent, briefing]: Json[] = await Promise.all([
         // include_open: sem isso o upstream esconde a sessao ainda em curso — a
         // que costuma ter as observacoes mais recentes. limit=100 e o teto dele.
         fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/sessions?include_open=true&limit=100`),
@@ -357,14 +370,14 @@ const server = http.createServer(async (req, res) => {
       ]);
 
       // Casa cada sessao com a pagina consolidada correspondente, quando existe.
-      const pageBySession = new Map();
+      const pageBySession = new Map<string, Json>();
       for (const h of recent?.hits || []) {
         if (h.path.startsWith('sessions/')) {
           pageBySession.set(h.path.replace(/^sessions\//, '').replace(/\.md$/, ''), h);
         }
       }
 
-      const sessions = (listing?.sessions || []).map(s => ({
+      const sessions = (listing?.sessions || []).map((s: Json) => ({
         ...s,
         page: pageBySession.get(s.session_id) || null
       }));
@@ -388,7 +401,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const args = { workspace, project, limit, offset, order: 'asc' };
+      const args: Record<string, unknown> = { workspace, project, limit, offset, order: 'asc' };
       if (sessionId) args.session_id = sessionId;
 
       const data = await mcpCall('memory_read_session_observations', args);
@@ -401,7 +414,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/page' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const data = JSON.parse(body);
+      const data: Json = JSON.parse(body);
 
       const { workspace = 'default', project, path: docPath, body: docBody, tier = 'semantic', pinned = false, tags = [] } = data;
       if (!project || !docPath || docBody === undefined) {
@@ -410,7 +423,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const writeArgs = { workspace, project, path: docPath, body: docBody, tier, pinned, tags };
+      const writeArgs: Record<string, unknown> = { workspace, project, path: docPath, body: docBody, tier, pinned, tags };
       if (data.scope) writeArgs.scope = data.scope;
 
       const result = await mcpCall('memory_write_page', writeArgs);
@@ -469,7 +482,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/feedback' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const data = JSON.parse(body);
+      const data: Json = JSON.parse(body);
       const { workspace = 'default', project, path: docPath, signal, reason } = data;
 
       if (!project || !docPath || !signal) {
@@ -478,7 +491,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const args = { workspace, project, path: docPath, signal };
+      const args: Record<string, unknown> = { workspace, project, path: docPath, signal };
       if (reason) args.reason = reason;
 
       const result = await mcpCall('memory_feedback', args);
@@ -501,10 +514,10 @@ const server = http.createServer(async (req, res) => {
       // Listagem read-only. NAO usar GET /handoff daqui: aquele endpoint e o do
       // hook de session-start e marca o handoff como aceito antes de responder,
       // entao abrir esta tela consumia os handoffs pendentes um a um.
-      const listing = await fetchApiV1(
+      const listing: Json = await fetchApiV1(
         `/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/handoffs?limit=50`
       );
-      const handoffs = listing?.handoffs || [];
+      const handoffs: Json[] = listing?.handoffs || [];
 
       // O briefing continua sendo a fonte da contagem exibida no card.
       const briefing = await mcpCall('memory_briefing', { workspace, project });
@@ -513,7 +526,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({
         pending_count: briefing?.pending_handoff_count || 0,
         handoffs,
-        active_handoff: handoffs.find(h => h.state === 'open') || null
+        active_handoff: handoffs.find((h: Json) => h.state === 'open') || null
       }));
       return;
     }
@@ -522,7 +535,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/handoff/cancel' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const data = body ? JSON.parse(body) : {};
+      const data: Json = body ? JSON.parse(body) : {};
       const { workspace = 'default', project, handoff_id } = data;
 
       if (!project) {
@@ -531,7 +544,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      let result = null;
+      let result: Json = null;
       if (handoff_id) {
         result = await mcpCall('memory_handoff_cancel', { workspace, project, handoff_id, any_owner: true });
       } else {
@@ -548,7 +561,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/lint' && req.method === 'POST') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const data = body ? JSON.parse(body) : {};
+      const data: Json = body ? JSON.parse(body) : {};
       const { workspace = 'default', project, no_llm = false } = data;
 
       if (!project) {
@@ -594,7 +607,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const data = await mcpCall('memory_recent', { workspace, project, limit: PAGE_LIMIT });
-      const hits = data?.hits || [];
+      const hits: Json[] = data?.hits || [];
 
       res.writeHead(200, {
         'Content-Type': 'application/zip',
@@ -602,7 +615,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       const archive = archiver('zip', { zlib: { level: 9 } });
-      archive.on('error', (err) => {
+      archive.on('error', (err: Error) => {
         console.error('Zip error:', err);
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -620,7 +633,7 @@ const server = http.createServer(async (req, res) => {
             archive.append(page.body, { name: hit.path });
           }
         } catch (e) {
-          console.error(`Error archiving ${hit.path}:`, e.message);
+          console.error(`Error archiving ${hit.path}:`, errMsg(e));
         }
       }
 
@@ -633,7 +646,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     console.error('Server error:', err);
     res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: err.message }));
+    res.end(JSON.stringify({ error: errMsg(err) }));
   }
 });
 

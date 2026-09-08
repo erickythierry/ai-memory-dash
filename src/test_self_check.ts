@@ -2,52 +2,65 @@
 // Descobre projetos e paginas em runtime, entao roda em qualquer instancia.
 // Precisa de um .env valido. Nao escreve nada fora do sinal de feedback do passo 8.
 import assert from 'node:assert';
-import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const BASE = 'http://127.0.0.1:3838';
-const get = async (p) => {
+// Respostas do proprio servidor: JSON dinamico, sem schema. Nao vale inventar
+// interfaces so para o self-check.
+type Json = any;
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// DASH_URL/PORT permitem rodar contra uma instancia em outra porta (a de producao
+// costuma estar ocupando a 3838).
+const PORT = process.env.PORT || '3838';
+const BASE = process.env.DASH_URL || `http://127.0.0.1:${PORT}`;
+const get = async (p: string): Promise<Response> => {
   const res = await fetch(BASE + p);
   assert.strictEqual(res.status, 200, `GET ${p} devolveu ${res.status}`);
   return res;
 };
-const q = (o) => new URLSearchParams(o).toString();
+const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
+const getJson = async (p: string): Promise<Json> => (await get(p)).json();
 
-let serverProc = null;
+let serverProc: ChildProcess | null = null;
 try {
   await fetch(`${BASE}/api/projects`);
 } catch {
-  serverProc = spawn('node', ['server.js'], { stdio: 'pipe' });
+  serverProc = spawn('node', ['dist/server.js'], { cwd: ROOT, stdio: 'pipe', env: { ...process.env, PORT } });
   await new Promise((resolve) => setTimeout(resolve, 1500));
 }
 
 try {
   // 1. Lista de projetos
-  const projects = await (await get('/api/projects')).json();
+  const projects: Json[] = await getJson('/api/projects');
   assert(Array.isArray(projects), 'Projetos deve ser um array');
   assert(projects.length > 0, 'A instancia precisa de ao menos um projeto para o self-check');
   console.log(`✅ GET /api/projects retornou ${projects.length} projetos`);
 
   // 1b. Cards da tela inicial: /api/projects precisa vir enriquecido com o overview
-  const withStats = projects.filter((p) => p.stats);
+  const withStats = projects.filter((p: Json) => p.stats);
   assert(withStats.length > 0, 'Nenhum projeto veio com stats; o enriquecimento do overview falhou');
   for (const p of withStats) {
     for (const k of ['sessions', 'observations', 'pages_all', 'pending_handoffs', 'orphans', 'rot']) {
       assert.strictEqual(typeof p.stats[k], 'number', `stats.${k} de ${p.project_name} deveria ser numero`);
     }
   }
-  assert(withStats.some((p) => p.stats.sessions > 0), 'Nenhum projeto reportou sessoes; suspeito de stats zerado');
+  assert(withStats.some((p: Json) => p.stats.sessions > 0), 'Nenhum projeto reportou sessoes; suspeito de stats zerado');
   console.log(`✅ ${withStats.length}/${projects.length} projetos vieram com stats de sessoes, handoffs e saude`);
 
   const targets = projects
-    .filter((p) => p.project_name)
-    .map((p) => ({ workspace: p.workspace_name || 'default', project: p.project_name }));
+    .filter((p: Json) => p.project_name)
+    .map((p: Json) => ({ workspace: p.workspace_name || 'default', project: p.project_name }));
   assert(targets.length > 0, 'Nao consegui extrair workspace/project da resposta');
 
   // 2. Primeiro projeto que tenha paginas, e o maior deles para o teste de truncamento
-  let target = null;
-  let biggest = { project: null, pages: [] };
+  let target: Json = null;
+  let biggest: { project: string | null; pages: Json[] } = { project: null, pages: [] };
   for (const t of targets) {
-    const pages = await (await get(`/api/pages?${q(t)}`)).json();
+    const pages: Json[] = await getJson(`/api/pages?${q(t)}`);
     assert(Array.isArray(pages), `Paginas de ${t.project} deve ser um array`);
     if (!target && pages.length > 0) target = { ...t, pages };
     if (pages.length > biggest.pages.length) biggest = { ...t, pages };
@@ -57,7 +70,7 @@ try {
 
   // 3. Leitura de um documento
   const testDoc = target.pages[0].path;
-  const pageData = await (await get(`/api/page?${q({ workspace: target.workspace, project: target.project, path: testDoc })}`)).json();
+  const pageData: Json = await getJson(`/api/page?${q({ workspace: target.workspace, project: target.project, path: testDoc })}`);
   assert.strictEqual(pageData.path, testDoc);
   assert(typeof pageData.body === 'string', 'Corpo do doc deve ser string');
   console.log(`✅ GET /api/page leu "${testDoc}" (${pageData.body.length} bytes)`);
@@ -76,9 +89,9 @@ try {
   console.log(`✅ GET /api/download/zip empacotou ${target.project} (${zipBuffer.byteLength} bytes)`);
 
   // 6. Historico: toda sessao aparece, consolidada em pagina wiki ou nao
-  let sessionHit = null;
+  let sessionHit: Json = null;
   for (const t of targets) {
-    const data = await (await get(`/api/sessions?${q(t)}`)).json();
+    const data: Json = await getJson(`/api/sessions?${q(t)}`);
     assert(Array.isArray(data.sessions), 'sessions deve ser um array');
     if (data.sessions.length > 0) {
       sessionHit = { ...t, data };
@@ -86,7 +99,7 @@ try {
     }
   }
   if (sessionHit) {
-    const sessions = sessionHit.data.sessions;
+    const sessions: Json[] = sessionHit.data.sessions;
     for (const sess of sessions) {
       assert(sess.session_id, 'toda sessao precisa de session_id');
       assert.strictEqual(typeof sess.observation_count, 'number', 'observation_count deve ser numero');
@@ -98,11 +111,11 @@ try {
       assert(sessions.length >= briefed,
         `Listagem trouxe ${sessions.length} sessoes mas o briefing conta ${briefed}: sessao sumindo da tela`);
     }
-    console.log(`✅ GET /api/sessions retornou ${sessions.length} sessoes em ${sessionHit.project} (${sessions.filter(x => !x.page).length} sem pagina consolidada)`);
+    console.log(`✅ GET /api/sessions retornou ${sessions.length} sessoes em ${sessionHit.project} (${sessions.filter((x: Json) => !x.page).length} sem pagina consolidada)`);
 
     // 7. Observacoes de uma sessao, o numero que o card da tela inicial mostra
-    const withObs = sessions.find((x) => x.observation_count > 0) || sessions[0];
-    const obsData = await (await get(`/api/session/observations?${q({ workspace: sessionHit.workspace, project: sessionHit.project, session_id: withObs.session_id, limit: 5 })}`)).json();
+    const withObs: Json = sessions.find((x: Json) => x.observation_count > 0) || sessions[0];
+    const obsData: Json = await getJson(`/api/session/observations?${q({ workspace: sessionHit.workspace, project: sessionHit.project, session_id: withObs.session_id, limit: '5' })}`);
     assert(Array.isArray(obsData.observations), 'observations deve ser um array');
     if (withObs.observation_count > 0) {
       assert(obsData.observations.length > 0,
@@ -114,40 +127,40 @@ try {
   }
 
   // 7a. Grafo de links: nos, arestas e coerencia com as paginas do projeto
-  const graphTarget = await (async () => {
+  const graphTarget: Json = await (async () => {
     for (const t of targets) {
-      const g = await (await get(`/api/graph?${q(t)}`)).json();
+      const g: Json = await getJson(`/api/graph?${q(t)}`);
       if (g.edges.length > 0) return { ...t, g };
     }
     return null;
   })();
   if (graphTarget) {
-    const { nodes, edges } = graphTarget.g;
-    const ids = new Set(nodes.map((n) => n.id));
+    const { nodes, edges }: { nodes: Json[]; edges: Json[] } = graphTarget.g;
+    const ids = new Set(nodes.map((n: Json) => n.id));
     for (const e of edges) {
       // Aresta orfa de no quebra o render: todo alvo cross-project vira no externo.
       assert(ids.has(e.from), `aresta sai de no inexistente: ${e.from}`);
       assert(ids.has(e.to), `aresta aponta para no inexistente: ${e.to}`);
     }
-    const degree = new Map(nodes.map((n) => [n.id, 0]));
+    const degree = new Map<string, number>(nodes.map((n: Json) => [n.id, 0]));
     for (const e of edges) {
-      degree.set(e.from, degree.get(e.from) + 1);
-      degree.set(e.to, degree.get(e.to) + 1);
+      degree.set(e.from, degree.get(e.from)! + 1);
+      degree.set(e.to, degree.get(e.to)! + 1);
     }
     for (const n of nodes) {
       assert.strictEqual(n.degree, degree.get(n.id), `grau errado em ${n.id}`);
       if (n.orphan) assert.strictEqual(n.degree, 0, `${n.id} marcado orfao mas tem arestas`);
     }
-    console.log(`✅ GET /api/graph montou ${nodes.length} nos e ${edges.length} arestas em ${graphTarget.project} (${nodes.filter((n) => n.external).length} externos)`);
+    console.log(`✅ GET /api/graph montou ${nodes.length} nos e ${edges.length} arestas em ${graphTarget.project} (${nodes.filter((n: Json) => n.external).length} externos)`);
   } else {
     console.log('⏭️  Nenhum projeto com links; passo 7a pulado');
   }
 
   // 7b. Paginas vem marcadas com as flags de saude que o card resume
-  const flagged = await (async () => {
+  const flagged: Json = await (async () => {
     for (const t of targets) {
-      const pages = await (await get(`/api/pages?${q(t)}`)).json();
-      const hit = pages.filter((p) => (p.health || []).length > 0);
+      const pages: Json[] = await getJson(`/api/pages?${q(t)}`);
+      const hit = pages.filter((p: Json) => (p.health || []).length > 0);
       if (hit.length) return { ...t, pages, hit };
     }
     return null;
@@ -169,7 +182,7 @@ try {
     body: JSON.stringify({ workspace: target.workspace, project: target.project, path: testDoc, signal: 'helpful' })
   });
   assert.strictEqual(resFeedback.status, 200);
-  assert((await resFeedback.json()).success, 'Feedback deve retornar sucesso');
+  assert(((await resFeedback.json()) as Json).success, 'Feedback deve retornar sucesso');
   console.log('✅ POST /api/feedback registrou sinal "helpful"');
 
   // 9. Frontend
@@ -177,25 +190,30 @@ try {
   assert(html.includes('mermaid'), 'HTML deve conter suporte a mermaid');
   assert(html.includes('highlight.js'), 'HTML deve conter suporte a highlight.js');
   assert(!html.includes('__AI_MEMORY_URL__'), 'Placeholder da URL upstream deve ser substituido no serve');
-  console.log('✅ GET / entregou o frontend SPA');
+  assert(html.includes('/static/app.js'), 'HTML deve carregar o bundle compilado do frontend');
+  assert((await get('/static/app.js')).status === 200, '/static/app.js precisa ser servido');
+  console.log('✅ GET / entregou o frontend SPA e o bundle /static/app.js');
 
   // 9b. O grafo tem que morrer em toda troca de tela. O bug era ele sobreviver a
   // navegacao e reaparecer sobre o proximo projeto, com os nos do anterior.
+  // Le o fonte TS: o app.js compilado e reindentado pelo tsc, entao o corte por
+  // indentacao so e confiavel no arquivo original.
+  const app = fs.readFileSync(path.join(ROOT, 'src/client/app.ts'), 'utf8');
   for (const fn of ['goToProjects', 'openProject', 'setDocMode', 'closeGraph']) {
-    const at = html.indexOf(`function ${fn}(`);
+    const at = app.indexOf(`function ${fn}(`);
     assert(at !== -1, `funcao ${fn} sumiu do frontend`);
     if (fn === 'closeGraph') continue;
     // Corpo ate a proxima declaracao de funcao no mesmo nivel de indentacao.
-    const rest = html.slice(at);
+    const rest = app.slice(at);
     const end = rest.indexOf('\n    }');
     assert(rest.slice(0, end).includes('closeGraph()'),
       `${fn} nao chama closeGraph(): grafo vai sobreviver a navegacao`);
   }
-  assert(html.includes('graphData = null'), 'closeGraph precisa descartar graphData do projeto antigo');
+  assert(app.includes('graphData = null'), 'closeGraph precisa descartar graphData do projeto antigo');
 
   // A barra de acoes age sobre currentDocPath — deixar o Deletar visivel sobre o
   // grafo apagaria a doc aberta antes dele.
-  const openBody = html.slice(html.indexOf('async function toggleGraphView()'));
+  const openBody = app.slice(app.indexOf('async function toggleGraphView()'));
   const openEnd = openBody.indexOf('\n    }');
   assert(/docHeader'\)\.classList\.add\('hidden'\)/.test(openBody.slice(0, openEnd)),
     'abrir o grafo precisa esconder docHeader: o botao Deletar agiria na doc anterior');
@@ -213,16 +231,16 @@ try {
   console.log(`✅ Maior projeto (${biggest.project}) listou ${biggest.pages.length} paginas sem truncar`);
 
   // 12. Ler handoffs nao pode consumi-los (o GET /handoff do upstream marca aceito)
-  const handoffTarget = await (async () => {
+  const handoffTarget: Json = await (async () => {
     for (const t of targets) {
-      const d = await (await get(`/api/handoffs?${q(t)}`)).json();
+      const d: Json = await getJson(`/api/handoffs?${q(t)}`);
       if ((d.pending_count || 0) > 0) return { ...t, before: d.pending_count };
     }
     return null;
   })();
   if (handoffTarget) {
     for (let i = 0; i < 3; i++) {
-      const d = await (await get(`/api/handoffs?${q({ workspace: handoffTarget.workspace, project: handoffTarget.project })}`)).json();
+      const d: Json = await getJson(`/api/handoffs?${q({ workspace: handoffTarget.workspace, project: handoffTarget.project })}`);
       assert.strictEqual(d.pending_count, handoffTarget.before,
         `Ler /api/handoffs consumiu handoff: ${handoffTarget.before} -> ${d.pending_count}`);
     }
