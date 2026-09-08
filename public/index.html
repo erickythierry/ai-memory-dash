@@ -513,18 +513,103 @@
       document.getElementById('sidebarProjectTitle').innerText = `${workspace}/${project}`;
       updateBreadcrumb();
 
-      // Reset viewer
+      // Reset viewer para exibir a Atividade Recente (igual ao ai-memory original)
       document.getElementById('docHeader').classList.add('hidden');
-      document.getElementById('docViewer').innerHTML = `
-        <div id="docMarkdownBody" class="markdown-body text-slate-300">
-          <div class="text-center text-slate-500 text-sm py-20">
-            Nenhuma documentação selecionada. Clique em um arquivo na barra lateral.
+      renderRecentActivityPlaceholder();
+
+      await loadProjectPages();
+      renderRecentActivityView();
+      loadProjectHistory(); // Carrega contagem do histórico em background
+    }
+
+    function renderRecentActivityPlaceholder() {
+      const viewer = document.getElementById('docViewer');
+      viewer.innerHTML = `
+        <div class="max-w-4xl w-full mx-auto py-4">
+          <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Recent Activity</div>
+          <div class="text-slate-500 text-xs py-8 text-center">Carregando atividade recente...</div>
+        </div>
+      `;
+    }
+
+    function renderRecentActivityView() {
+      if (currentDocPath || currentSessionId) return;
+      const viewer = document.getElementById('docViewer');
+      if (!currentPagesList || currentPagesList.length === 0) {
+        viewer.innerHTML = `
+          <div class="max-w-4xl w-full mx-auto py-4">
+            <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Recent Activity</div>
+            <div class="text-slate-500 text-xs py-8 text-center">Nenhum documento recente neste projeto.</div>
+          </div>
+        `;
+        return;
+      }
+
+      // Ordena pelas páginas mais recentes
+      const sorted = [...currentPagesList].sort((a, b) => {
+        const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+        const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+        return tb - ta;
+      });
+
+      let itemsHtml = sorted.map(p => {
+        const kind = p.kind || 'note';
+        const color = kindColor(kind);
+        const timeStr = timeAgo(p.updated_at);
+        const flags = (p.health || []).map(f => HEALTH_FLAGS[f]).filter(Boolean);
+        const flagIcons = flags.map(f => `<span class="${f.tone}" title="${f.title}">${f.icon}</span>`).join(' ');
+
+        return `
+          <div onclick="loadDoc('${escapeHtml(p.path)}')" class="p-3 rounded-lg border border-slate-800/80 bg-slate-900/40 hover:bg-slate-900/80 hover:border-slate-700 cursor-pointer transition flex items-center justify-between group">
+            <div class="min-w-0 pr-4">
+              <div class="text-sm font-medium text-slate-200 group-hover:text-blue-300 transition truncate flex items-center gap-1.5">
+                ${flagIcons ? `<span>${flagIcons}</span>` : ''}
+                <span>${escapeHtml(p.title || p.path)}</span>
+              </div>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="px-1.5 py-0.2 rounded text-[10px] font-mono font-medium" style="background: ${color}20; color: ${color}; border: 1px solid ${color}40">${escapeHtml(kind)}</span>
+                <span class="text-xs text-slate-500 font-mono truncate">${escapeHtml(p.path)}</span>
+              </div>
+            </div>
+            <div class="text-xs text-slate-500 shrink-0 tabular-nums">
+              ${timeStr}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      viewer.innerHTML = `
+        <div class="max-w-4xl w-full mx-auto py-4">
+          <div class="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+            <div>
+              <h2 class="text-base font-bold text-slate-100">${escapeHtml(currentWorkspace)}/${escapeHtml(currentProject)}</h2>
+              <div class="text-xs text-slate-400 font-medium uppercase tracking-wider mt-0.5">Recent Activity</div>
+            </div>
+            <span class="text-xs text-slate-500">${sorted.length} ${sorted.length === 1 ? 'documento' : 'documentos'}</span>
+          </div>
+          <div class="space-y-2">
+            ${itemsHtml}
           </div>
         </div>
       `;
+    }
 
-      await loadProjectPages();
-      loadProjectHistory(); // Carrega contagem do histórico em background
+    function timeAgo(dateStr) {
+      if (!dateStr) return '';
+      const now = Date.now();
+      const diff = Math.max(0, now - new Date(dateStr).getTime());
+      const sec = Math.floor(diff / 1000);
+      if (sec < 60) return 'just now';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min} ${min === 1 ? 'minute' : 'minutes'} ago`;
+      const hrs = Math.floor(min / 60);
+      if (hrs < 24) return `${hrs} ${hrs === 1 ? 'hour' : 'hours'} ago`;
+      const days = Math.floor(hrs / 24);
+      if (days < 30) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+      const months = Math.floor(days / 30);
+      if (months < 12) return `${months} ${months === 1 ? 'month' : 'months'} ago`;
+      const years = Math.floor(days / 365);
+      return `${years} ${years === 1 ? 'year' : 'years'} ago`;
     }
 
     async function loadProjectPages() {
@@ -780,14 +865,8 @@
         currentDocPath = null;
         currentDocData = null;
         document.getElementById('docHeader').classList.add('hidden');
-        document.getElementById('docViewer').innerHTML = `
-          <div id="docMarkdownBody" class="markdown-body text-slate-300">
-            <div class="text-center text-slate-500 text-sm py-20">
-              Documento deletado com sucesso. Selecione outro arquivo ao lado.
-            </div>
-          </div>
-        `;
         await loadProjectPages();
+        renderRecentActivityView();
       } catch (err) {
         alert('Erro ao deletar: ' + err.message);
       }
@@ -919,7 +998,7 @@
       let html = `
         <a href="javascript:void(0)" onclick="goToProjects()" class="hover:text-slate-200">projetos</a>
         <span>/</span>
-        <span class="text-slate-300 font-medium">${currentWorkspace}/${currentProject}</span>
+        <a href="javascript:void(0)" onclick="openProject('${escapeHtml(currentWorkspace)}', '${escapeHtml(currentProject)}')" class="text-slate-300 hover:text-white font-medium">${escapeHtml(currentWorkspace)}/${escapeHtml(currentProject)}</a>
       `;
       if (currentDocPath) {
         html += `

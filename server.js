@@ -221,12 +221,23 @@ const server = http.createServer(async (req, res) => {
       // Busca as páginas recentes do projeto, e em paralelo o drill-down de saúde
       // para marcar cada uma na lista. O `limit` do overview e o teto das listas
       // stale/duplicate/orphan: o default e 10, o que truncaria a marcacao.
-      const [data, health] = await Promise.all([
+      const [data, health, v1Listing] = await Promise.all([
         mcpCall('memory_recent', { workspace, project, limit: PAGE_LIMIT }),
-        healthByPath(workspace, project)
+        healthByPath(workspace, project),
+        fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages?limit=${PAGE_LIMIT}`).catch(() => [])
       ]);
 
-      const hits = (data?.hits || []).map(h => ({ ...h, health: health.get(h.path) || [] }));
+      const v1Map = new Map((Array.isArray(v1Listing) ? v1Listing : []).map(p => [p.path, p]));
+      const hits = (data?.hits || []).map(h => {
+        const v1 = v1Map.get(h.path) || {};
+        return {
+          ...h,
+          kind: v1.kind || h.kind || 'note',
+          tier: v1.tier || h.tier || 'semantic',
+          updated_at: v1.updated_at || (h.rank ? new Date(h.rank / 1000).toISOString() : null),
+          health: health.get(h.path) || []
+        };
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(hits));
       return;

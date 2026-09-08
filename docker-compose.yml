@@ -9,3 +9,7 @@ services:
     # ponytail: bind so no loopback - a dash carrega o token e nao tem auth propria
     ports:
       - "127.0.0.1:3838:3838"
+    volumes:
+      - ./server.js:/app/server.js:ro
+      - ./public:/app/public:ro
+
