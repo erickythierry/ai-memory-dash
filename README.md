@@ -170,3 +170,7 @@ test_self_check.js   # self-check de ponta a ponta
 ```
 
 Dependência única: `archiver`. O resto é stdlib do Node.
+
+## Licença
+
+[MIT](LICENSE).
