@@ -250,6 +250,79 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 5.0 GET /api/graph?workspace=...&project=...
+    if (pathname === '/api/graph' && req.method === 'GET') {
+      const workspace = parsedUrl.searchParams.get('workspace') || 'default';
+      const project = parsedUrl.searchParams.get('project');
+      if (!project) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'project is required' }));
+        return;
+      }
+
+      // Os links so existem na pagina inteira: nem a listagem nem o /graph do
+      // upstream (que e so cross-project) os trazem. Entao busca cada pagina em
+      // paralelo — 77 paginas levam ~300ms.
+      const listing = await fetchApiV1(
+        `/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages`
+      );
+      const paths = (Array.isArray(listing) ? listing : listing?.pages || []);
+
+      const pages = await Promise.all(paths.map(p =>
+        fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages/${p.path}`)
+          .catch(() => null)
+      ));
+
+      const health = await healthByPath(workspace, project);
+      const nodes = new Map();
+      const key = (ws, pr, pa) => `${ws}/${pr}/${pa}`;
+
+      for (const p of paths) {
+        nodes.set(key(workspace, project, p.path), {
+          id: key(workspace, project, p.path),
+          workspace, project, path: p.path,
+          title: p.title || p.path,
+          kind: p.kind || 'note',
+          tier: p.tier,
+          external: false,
+          orphan: (health.get(p.path) || []).includes('orphan'),
+          degree: 0
+        });
+      }
+
+      const edges = [];
+      for (const page of pages) {
+        if (!page?.links) continue;
+        const from = key(page.workspace, page.project, page.path);
+        for (const l of page.links) {
+          if (!l.path) continue;
+          const to = key(l.workspace || workspace, l.project || project, l.path);
+          if (from === to) continue;
+          // Alvo em outro projeto vira no externo, para a aresta nao sumir.
+          if (!nodes.has(to)) {
+            nodes.set(to, {
+              id: to,
+              workspace: l.workspace || workspace,
+              project: l.project || project,
+              path: l.path,
+              title: l.title || l.path,
+              kind: l.kind || 'note',
+              external: true,
+              orphan: false,
+              degree: 0
+            });
+          }
+          edges.push({ from, to });
+          nodes.get(from).degree++;
+          nodes.get(to).degree++;
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ nodes: [...nodes.values()], edges }));
+      return;
+    }
+
     // 5.1 GET /api/sessions?workspace=...&project=...
     if (pathname === '/api/sessions' && req.method === 'GET') {
       const workspace = parsedUrl.searchParams.get('workspace') || 'default';

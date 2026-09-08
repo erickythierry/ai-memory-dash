@@ -113,6 +113,36 @@ try {
     console.log('⏭️  Nenhuma sessao na instancia; passos 6 e 7 pulados');
   }
 
+  // 7a. Grafo de links: nos, arestas e coerencia com as paginas do projeto
+  const graphTarget = await (async () => {
+    for (const t of targets) {
+      const g = await (await get(`/api/graph?${q(t)}`)).json();
+      if (g.edges.length > 0) return { ...t, g };
+    }
+    return null;
+  })();
+  if (graphTarget) {
+    const { nodes, edges } = graphTarget.g;
+    const ids = new Set(nodes.map((n) => n.id));
+    for (const e of edges) {
+      // Aresta orfa de no quebra o render: todo alvo cross-project vira no externo.
+      assert(ids.has(e.from), `aresta sai de no inexistente: ${e.from}`);
+      assert(ids.has(e.to), `aresta aponta para no inexistente: ${e.to}`);
+    }
+    const degree = new Map(nodes.map((n) => [n.id, 0]));
+    for (const e of edges) {
+      degree.set(e.from, degree.get(e.from) + 1);
+      degree.set(e.to, degree.get(e.to) + 1);
+    }
+    for (const n of nodes) {
+      assert.strictEqual(n.degree, degree.get(n.id), `grau errado em ${n.id}`);
+      if (n.orphan) assert.strictEqual(n.degree, 0, `${n.id} marcado orfao mas tem arestas`);
+    }
+    console.log(`✅ GET /api/graph montou ${nodes.length} nos e ${edges.length} arestas em ${graphTarget.project} (${nodes.filter((n) => n.external).length} externos)`);
+  } else {
+    console.log('⏭️  Nenhum projeto com links; passo 7a pulado');
+  }
+
   // 7b. Paginas vem marcadas com as flags de saude que o card resume
   const flagged = await (async () => {
     for (const t of targets) {
@@ -148,6 +178,28 @@ try {
   assert(html.includes('highlight.js'), 'HTML deve conter suporte a highlight.js');
   assert(!html.includes('__AI_MEMORY_URL__'), 'Placeholder da URL upstream deve ser substituido no serve');
   console.log('✅ GET / entregou o frontend SPA');
+
+  // 9b. O grafo tem que morrer em toda troca de tela. O bug era ele sobreviver a
+  // navegacao e reaparecer sobre o proximo projeto, com os nos do anterior.
+  for (const fn of ['goToProjects', 'openProject', 'setDocMode', 'closeGraph']) {
+    const at = html.indexOf(`function ${fn}(`);
+    assert(at !== -1, `funcao ${fn} sumiu do frontend`);
+    if (fn === 'closeGraph') continue;
+    // Corpo ate a proxima declaracao de funcao no mesmo nivel de indentacao.
+    const rest = html.slice(at);
+    const end = rest.indexOf('\n    }');
+    assert(rest.slice(0, end).includes('closeGraph()'),
+      `${fn} nao chama closeGraph(): grafo vai sobreviver a navegacao`);
+  }
+  assert(html.includes('graphData = null'), 'closeGraph precisa descartar graphData do projeto antigo');
+
+  // A barra de acoes age sobre currentDocPath — deixar o Deletar visivel sobre o
+  // grafo apagaria a doc aberta antes dele.
+  const openBody = html.slice(html.indexOf('async function toggleGraphView()'));
+  const openEnd = openBody.indexOf('\n    }');
+  assert(/docHeader'\)\.classList\.add\('hidden'\)/.test(openBody.slice(0, openEnd)),
+    'abrir o grafo precisa esconder docHeader: o botao Deletar agiria na doc anterior');
+  console.log('✅ Toda troca de tela fecha o grafo, descarta os dados e esconde a barra da doc');
 
   // 10. Sem CORS wildcard: rotas de escrita nao podem ser dirigidas por site externo
   const resCors = await get('/api/projects');

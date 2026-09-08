@@ -22,6 +22,7 @@ ai-memory pela API pública dela. O projeto original fica intacto.
 | **Baixar** | Um `.md` avulso ou o projeto inteiro em `.zip`, com a estrutura de pastas |
 | **Histórico** | Toda sessão do projeto com sua contagem de observações; clicar abre a timeline completa |
 | **Manutenção** | Sinais de feedback (`helpful`/`stale`/`wrong`), lint do projeto, consolidação LLM de sessão |
+| **Grafo** | Mapa de links do projeto, com zoom, pan e navegação por clique |
 | **Handoffs** | Histórico completo por estado (pendente / consumido / expirado), com descarte explícito |
 
 ## Requisitos
@@ -82,6 +83,7 @@ Todas as rotas devolvem JSON, exceto os downloads.
 |---|---|---|
 | `/api/projects` | GET | Lista projetos, cada um enriquecido com `stats` (sessões, observações, handoffs pendentes, órfãs, rot) |
 | `/api/search?q=` | GET | Busca full-text |
+| `/api/graph?workspace=&project=` | GET | Nós e arestas do grafo de `[[wikilinks]]` do projeto |
 | `/api/pages?workspace=&project=` | GET | Páginas do projeto, cada uma com `health: []` (`orphan`, `stale`, `duplicate`) |
 | `/api/page?workspace=&project=&path=` | GET | Lê uma página |
 | `/api/page` | POST | Cria ou edita (`{workspace, project, path, body, tier, pinned, tags, scope}`) |
@@ -108,6 +110,21 @@ Dois caminhos até o upstream:
 `/api/projects` compõe as duas coisas: pega a lista do upstream e busca o `/overview` de
 cada projeto em paralelo para preencher os números do card. Um projeto cujo overview
 falhe vira `stats: null` em vez de derrubar a listagem.
+
+### O grafo precisa das páginas inteiras
+
+`GET /api/v1/graph` do upstream devolve **apenas arestas cross-project** — não é o
+grafo de links de um projeto. Os `[[wikilinks]]` só aparecem no corpo completo da
+página (`links`/`backlinks`), e a listagem de páginas não os traz. Então `/api/graph`
+busca cada página em paralelo: ~300ms para as 77 do maior projeto aqui.
+
+Alvos em outro projeto viram nós externos no resultado, senão uma aresta apontaria
+para um nó inexistente e o projeto cujo único link é cross-project apareceria
+inteiramente órfão.
+
+O layout é uma simulação de forças de ~50 linhas em SVG, sem biblioteca: repulsão
+O(n²), mola nas arestas, gravidade fraca ao centro e `alpha` decaindo até parar.
+Com dezenas de nós isso é irrelevante; acima de uns 500 vale trocar por d3-force.
 
 ### Duas armadilhas na listagem de sessões
 

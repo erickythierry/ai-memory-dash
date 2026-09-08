@@ -141,6 +141,9 @@
             <button onclick="triggerLintAudit()" title="Auditar Projeto (memory_lint)" class="p-1 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
             </button>
+            <button onclick="toggleGraphView()" title="Ver grafo de links do projeto" class="p-1 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4" stroke-width="2"/><circle cx="18" cy="8" r="2.4" stroke-width="2"/><circle cx="11" cy="18" r="2.4" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M8.1 7L15.9 7.7M16.6 10.2L12.4 15.7M9.3 16.2L7 8.4"/></svg>
+            </button>
             <button onclick="downloadProjectZip()" title="Download ZIP de todo o projeto" class="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
             </button>
@@ -260,6 +263,28 @@
                 <span>❌</span> <span>Incorreto</span>
               </button>
             </div>
+          </div>
+        </div>
+
+        <!-- Graph Mode: mapa de links do projeto -->
+        <div id="graphView" class="flex-1 flex-col overflow-hidden hidden">
+          <div class="px-4 py-2 border-b border-slate-800 bg-slate-900/30 flex items-center justify-between text-xs shrink-0">
+            <div class="flex items-center gap-3 text-slate-400">
+              <span id="graphSummary">Carregando grafo...</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="flex items-center gap-1.5 cursor-pointer text-slate-400">
+                <input type="checkbox" id="graphHideOrphans" onchange="renderGraph()" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-0">
+                <span>Esconder órfãs</span>
+              </label>
+              <span id="graphZoomLabel" class="text-slate-500 tabular-nums">100%</span>
+              <button onclick="fitGraph()" title="Enquadrar tudo (ou tecle F)" class="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300">Ajustar</button>
+              <button onclick="toggleGraphView()" class="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300">Fechar</button>
+            </div>
+          </div>
+          <div class="flex-1 relative overflow-hidden bg-slate-950">
+            <svg id="graphSvg" class="w-full h-full cursor-grab"></svg>
+            <div id="graphLegend" class="absolute bottom-3 left-3 text-[10px] text-slate-500 bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2 space-y-0.5 pointer-events-none"></div>
           </div>
         </div>
 
@@ -466,6 +491,8 @@
       document.getElementById('projectDetailView').classList.add('hidden');
       currentProject = null;
       currentDocPath = null;
+      currentSessionId = null;
+      closeGraph();
       updateBreadcrumb();
     }
 
@@ -476,6 +503,7 @@
       currentDocData = null;
       currentHistoryData = null;
       currentSessionId = null;
+      closeGraph();
       switchSidebarTab('docs');
 
       document.getElementById('projectsView').classList.add('hidden');
@@ -636,6 +664,9 @@
       const docViewer = document.getElementById('docViewer');
       const docEditor = document.getElementById('docEditor');
       const feedbackSec = document.getElementById('docFeedbackSection');
+
+      // Clicar numa pagina com o grafo aberto mostrava os dois painéis.
+      closeGraph();
 
       if (mode === 'view') {
         btnView.className = 'px-2.5 py-1 text-xs rounded-md bg-blue-600 text-white font-medium';
@@ -897,6 +928,296 @@
         `;
       }
       b.innerHTML = html;
+    }
+
+    // ======================= Grafo de links =======================
+    // ponytail: simulacao de forcas escrita a mao em ~50 linhas em vez de puxar
+    // d3. O maior projeto tem 79 nos, entao o O(n²) de repulsao e irrelevante.
+    // Trocar por quadtree/d3-force so se algum projeto passar de uns 500 nos.
+    let graphData = null;
+    let graphSim = null;
+
+    const KIND_COLORS = {
+      decision: '#f59e0b', gotcha: '#f43f5e', concept: '#8b5cf6', fact: '#22d3ee',
+      note: '#64748b', session: '#334155', runbook: '#10b981', preference: '#ec4899'
+    };
+    const kindColor = (k) => KIND_COLORS[k] || '#64748b';
+
+    window.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'f' && ev.key !== 'F') return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+      if (document.getElementById('graphView')?.classList.contains('hidden')) return;
+      fitGraph();
+    });
+
+    // Pan e zoom aplicados num <g> envolvente: um transform, nenhum recalculo
+    // da simulacao. `panned` distingue arrasto do fundo de clique num no.
+    const graphView = { k: 1, tx: 0, ty: 0, panned: false };
+
+    function applyGraphView() {
+      const vp = document.querySelector('#gViewport');
+      if (!vp) return;
+      vp.setAttribute('transform', `translate(${graphView.tx},${graphView.ty}) scale(${graphView.k})`);
+      document.getElementById('graphZoomLabel').innerText = Math.round(graphView.k * 100) + '%';
+    }
+
+    function resetGraphView(svg) {
+      graphView.k = 1; graphView.tx = 0; graphView.ty = 0; graphView.panned = false;
+      applyGraphView();
+      if (svg.dataset.zoomBound) return;
+      svg.dataset.zoomBound = '1';
+
+      // Zoom ancorado no cursor: o ponto sob o mouse fica parado.
+      svg.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        const r = svg.getBoundingClientRect();
+        const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+        const k = Math.min(8, Math.max(0.15, graphView.k * (ev.deltaY < 0 ? 1.12 : 1 / 1.12)));
+        graphView.tx = mx - (mx - graphView.tx) * (k / graphView.k);
+        graphView.ty = my - (my - graphView.ty) * (k / graphView.k);
+        graphView.k = k;
+        applyGraphView();
+      }, { passive: false });
+
+      let dragging = null;
+      svg.addEventListener('mousedown', (ev) => {
+        dragging = { x: ev.clientX, y: ev.clientY, tx: graphView.tx, ty: graphView.ty };
+        graphView.panned = false;
+        svg.style.cursor = 'grabbing';
+      });
+      window.addEventListener('mousemove', (ev) => {
+        if (!dragging) return;
+        const dx = ev.clientX - dragging.x, dy = ev.clientY - dragging.y;
+        if (Math.hypot(dx, dy) > 3) graphView.panned = true;
+        graphView.tx = dragging.tx + dx;
+        graphView.ty = dragging.ty + dy;
+        applyGraphView();
+      });
+      window.addEventListener('mouseup', () => {
+        dragging = null;
+        svg.style.cursor = 'grab';
+        // Zera no proximo tick, depois do click do no ter sido avaliado.
+        setTimeout(() => { graphView.panned = false; }, 0);
+      });
+      svg.addEventListener('dblclick', () => fitGraph());
+    }
+
+    // Enquadra o conteudo: le a caixa real dos nos ja posicionados.
+    function fitGraph() {
+      const svg = document.getElementById('graphSvg');
+      const vp = svg?.querySelector('#gViewport');
+      if (!vp) return;
+
+      graphView.k = 1; graphView.tx = 0; graphView.ty = 0;
+      applyGraphView();
+
+      const b = vp.getBBox();
+      if (!b.width || !b.height) return;
+      const r = svg.getBoundingClientRect();
+      const pad = 30;
+      const k = Math.min(8, Math.max(0.15,
+        Math.min((r.width - pad * 2) / b.width, (r.height - pad * 2) / b.height)));
+      graphView.k = k;
+      graphView.tx = (r.width - b.width * k) / 2 - b.x * k;
+      graphView.ty = (r.height - b.height * k) / 2 - b.y * k;
+      applyGraphView();
+    }
+
+    async function toggleGraphView() {
+      const view = document.getElementById('graphView');
+      if (!view.classList.contains('hidden')) {
+        closeGraph();
+        setDocMode('view');
+        return;
+      }
+
+      document.getElementById('docViewer').classList.add('hidden');
+      document.getElementById('docEditor').classList.add('hidden');
+      // A barra da doc age sobre currentDocPath — inclusive o Deletar. Com o
+      // grafo na tela ela nao tem contexto nenhum, entao sai junto.
+      document.getElementById('docHeader').classList.add('hidden');
+      view.classList.remove('hidden');
+      view.classList.add('flex');
+
+      document.getElementById('graphSummary').innerText = 'Carregando grafo...';
+      try {
+        const res = await fetch(`/api/graph?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}`);
+        graphData = await res.json();
+        if (graphData.error) throw new Error(graphData.error);
+        renderGraph();
+      } catch (err) {
+        document.getElementById('graphSummary').innerText = 'Erro ao montar o grafo: ' + err.message;
+      }
+    }
+
+    function stopGraph() {
+      if (graphSim) { cancelAnimationFrame(graphSim); graphSim = null; }
+    }
+
+    // Fecha o grafo e descarta os dados. Chamada de todo ponto que troca o que
+    // esta na tela: sem isso o grafo de um projeto sobrevivia a navegacao e
+    // reaparecia sobre o proximo.
+    function closeGraph() {
+      stopGraph();
+      graphData = null;
+      const panel = document.getElementById('graphView');
+      if (!panel || panel.classList.contains('hidden')) return;
+      panel.classList.add('hidden');
+      panel.classList.remove('flex');
+      // Abrir o grafo escondeu o viewer; devolve, senao a area principal fica
+      // em branco para quem so navegou (setDocMode ajusta depois, se for o caso).
+      document.getElementById('docViewer').classList.remove('hidden');
+      if (currentDocPath || currentSessionId) {
+        document.getElementById('docHeader').classList.remove('hidden');
+      }
+    }
+
+    function renderGraph() {
+      stopGraph();
+      if (!graphData) return;
+
+      const hideOrphans = document.getElementById('graphHideOrphans').checked;
+      const nodes = graphData.nodes
+        .filter(n => !(hideOrphans && n.degree === 0))
+        .map(n => ({ ...n }));
+      const byId = new Map(nodes.map(n => [n.id, n]));
+      const edges = graphData.edges
+        .map(e => ({ source: byId.get(e.from), target: byId.get(e.to) }))
+        .filter(e => e.source && e.target);
+
+      const svg = document.getElementById('graphSvg');
+      const rect = svg.getBoundingClientRect();
+      const W = rect.width || 800, H = rect.height || 600;
+
+      const orphanCount = graphData.nodes.filter(n => n.degree === 0).length;
+      document.getElementById('graphSummary').innerHTML =
+        `<strong class="text-slate-200">${nodes.length}</strong> páginas · ` +
+        `<strong class="text-slate-200">${edges.length}</strong> links · ` +
+        `${orphanCount} sem nenhuma conexão`;
+
+      const kinds = [...new Set(nodes.map(n => n.kind))].sort();
+      document.getElementById('graphLegend').innerHTML = kinds
+        .map(k => `<div><span style="color:${kindColor(k)}">●</span> ${k}</div>`).join('')
+        + '<div class="text-slate-600 mt-1">tracejado = outro projeto</div>';
+
+      if (nodes.length === 0) {
+        svg.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#475569" font-size="13">Nenhuma página para exibir.</text>';
+        return;
+      }
+
+      // Posicao inicial em circulo: converge mais rapido e evita o empurrao
+      // caotico de comecar todo mundo no mesmo ponto.
+      nodes.forEach((n, i) => {
+        const a = (i / nodes.length) * Math.PI * 2;
+        n.x = W / 2 + Math.cos(a) * Math.min(W, H) * 0.35;
+        n.y = H / 2 + Math.sin(a) * Math.min(W, H) * 0.35;
+        n.vx = 0; n.vy = 0;
+      });
+
+      const radius = (n) => 4 + Math.min(n.degree, 8);
+
+      svg.innerHTML = `
+        <g id="gViewport">
+          <g id="gEdges" stroke-linecap="round"></g>
+          <g id="gNodes"></g>
+        </g>
+      `;
+      const gEdges = svg.querySelector('#gEdges');
+      const gNodes = svg.querySelector('#gNodes');
+      resetGraphView(svg);
+
+      const edgeEls = edges.map(e => {
+        const el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        const cross = e.source.project !== e.target.project;
+        el.setAttribute('stroke', cross ? '#7c3aed' : '#1e293b');
+        el.setAttribute('stroke-width', cross ? '1.4' : '1');
+        if (cross) el.setAttribute('stroke-dasharray', '3 3');
+        gEdges.appendChild(el);
+        return el;
+      });
+
+      const nodeEls = nodes.map(n => {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.style.cursor = 'pointer';
+
+        const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        c.setAttribute('r', radius(n));
+        c.setAttribute('fill', n.degree === 0 ? '#1e293b' : kindColor(n.kind));
+        c.setAttribute('stroke', n.external ? '#7c3aed' : (n.degree === 0 ? '#334155' : '#0f172a'));
+        c.setAttribute('stroke-width', n.external ? '1.5' : '1');
+        if (n.external) c.setAttribute('stroke-dasharray', '2 2');
+        g.appendChild(c);
+
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('font-size', '9');
+        t.setAttribute('fill', n.degree === 0 ? '#475569' : '#94a3b8');
+        t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('dy', radius(n) + 10);
+        t.textContent = n.title.length > 28 ? n.title.slice(0, 27) + '…' : n.title;
+        g.appendChild(t);
+
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        title.textContent = `${n.project}/${n.path}\n${n.kind} · ${n.degree} conexões`;
+        g.appendChild(title);
+
+        g.onclick = () => {
+          if (graphView.panned) return;   // arrastou o fundo: nao e clique
+          if (n.external) return openProject(n.workspace, n.project).then(() => loadDoc(n.path));
+          toggleGraphView();
+          loadDoc(n.path);
+        };
+        gNodes.appendChild(g);
+        return g;
+      });
+
+      // Verlet simplificado: repulsao entre todos, mola nas arestas, gravidade
+      // fraca ao centro. Alpha decai para a coisa parar sozinha.
+      let alpha = 1;
+      const tick = () => {
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const a = nodes[i], b = nodes[j];
+            let dx = b.x - a.x, dy = b.y - a.y;
+            let d2 = dx * dx + dy * dy || 0.01;
+            if (d2 > 90000) continue;              // longe demais: ignora
+            const f = 900 / d2;
+            const d = Math.sqrt(d2);
+            const fx = (dx / d) * f, fy = (dy / d) * f;
+            a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+          }
+        }
+        for (const e of edges) {
+          const dx = e.target.x - e.source.x, dy = e.target.y - e.source.y;
+          const d = Math.hypot(dx, dy) || 0.01;
+          const f = (d - 70) * 0.02;
+          const fx = (dx / d) * f, fy = (dy / d) * f;
+          e.source.vx += fx; e.source.vy += fy;
+          e.target.vx -= fx; e.target.vy -= fy;
+        }
+        for (const n of nodes) {
+          n.vx += (W / 2 - n.x) * 0.002;
+          n.vy += (H / 2 - n.y) * 0.002;
+          n.x += n.vx * alpha; n.y += n.vy * alpha;
+          n.vx *= 0.82; n.vy *= 0.82;
+          n.x = Math.max(20, Math.min(W - 20, n.x));
+          n.y = Math.max(20, Math.min(H - 20, n.y));
+        }
+
+        edges.forEach((e, i) => {
+          edgeEls[i].setAttribute('x1', e.source.x); edgeEls[i].setAttribute('y1', e.source.y);
+          edgeEls[i].setAttribute('x2', e.target.x); edgeEls[i].setAttribute('y2', e.target.y);
+        });
+        nodes.forEach((n, i) => nodeEls[i].setAttribute('transform', `translate(${n.x},${n.y})`));
+
+        alpha *= 0.985;
+        if (alpha > 0.02) {
+          graphSim = requestAnimationFrame(tick);
+        } else {
+          graphSim = null;
+          fitGraph();   // layout assentou: enquadra o resultado
+        }
+      };
+      tick();
     }
 
     // Histórico de Sessões
