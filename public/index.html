@@ -1,0 +1,1356 @@
+<!doctype html>
+<html lang="pt-BR" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ai-memory dash (sidecar)</title>
+  <link rel="icon" href="/static/logo.png" type="image/png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.1/github-markdown-dark.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+  </script>
+  <style>
+    /* Scrollbars discretos */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    .markdown-body {
+      background-color: transparent !important;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .markdown-body pre {
+      background-color: #0f172a !important;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .drop-active {
+      border-color: #3b82f6 !important;
+      background-color: rgba(59, 130, 246, 0.08) !important;
+    }
+  </style>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 flex flex-col font-sans antialiased overflow-hidden">
+  <!-- Top Navigation Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30 shrink-0 h-14">
+    <div class="px-4 flex items-center justify-between h-full gap-3">
+      <div class="flex items-center gap-3">
+        <a href="javascript:void(0)" onclick="goToProjects()" class="flex items-center gap-2 hover:opacity-80 transition-opacity">
+          <img src="/static/logo.png" alt="ai-memory" class="h-7 w-auto">
+          <span class="font-semibold text-sm tracking-tight text-slate-100 flex items-center gap-1.5">
+            ai-memory <span class="text-xs font-normal px-1.5 py-0.5 rounded bg-blue-900/60 text-blue-300 border border-blue-700/50">dash sidecar</span>
+          </span>
+        </a>
+
+        <!-- Breadcrumb -->
+        <div id="breadcrumb" class="hidden sm:flex items-center text-xs text-slate-400 gap-1.5 pl-4 border-l border-slate-800">
+          <!-- preenchido via JS -->
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <div class="relative">
+          <input
+            id="searchInput"
+            type="search"
+            placeholder="Buscar páginas (FTS5)…"
+            class="w-44 sm:w-72 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+            onkeydown="if(event.key==='Enter') doSearch()"
+          >
+          <button onclick="doSearch()" class="absolute right-2 top-2 text-slate-400 hover:text-slate-200">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+          </button>
+        </div>
+
+        <a href="__AI_MEMORY_URL__/web" target="_blank" title="Abrir Dash Original" class="p-1.5 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200 text-xs flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <div class="flex-1 flex overflow-hidden">
+    <!-- View 1: Projects Grid (Default) -->
+    <div id="projectsView" class="flex-1 overflow-y-auto p-6">
+      <div class="max-w-6xl mx-auto">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h1 class="text-xl font-bold text-slate-100">Projetos</h1>
+            <p class="text-xs text-slate-400 mt-0.5">Workspaces e projetos indexados no ai-memory.</p>
+          </div>
+          <button onclick="loadProjects()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            Atualizar
+          </button>
+        </div>
+
+        <div id="projectsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Cards de projetos preenchidos via JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- View 2: Search Results View -->
+    <div id="searchView" class="flex-1 overflow-y-auto p-6 hidden">
+      <div class="max-w-4xl mx-auto">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold text-slate-100 flex items-center gap-2">
+            Resultados para: <span id="searchQueryLabel" class="text-blue-400"></span>
+          </h2>
+          <button onclick="goToProjects()" class="text-xs text-slate-400 hover:text-slate-200">← Voltar</button>
+        </div>
+        <div id="searchResults" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- View 3: Project Detail + Sidebar + Doc View / Editor -->
+    <div id="projectDetailView" class="flex-1 flex overflow-hidden hidden">
+      <!-- Left Sidebar: Folders / Pages List / History -->
+      <aside class="w-80 border-r border-slate-800 bg-slate-900/40 flex flex-col shrink-0">
+        <div class="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/60">
+          <div class="truncate">
+            <span id="sidebarProjectTitle" class="font-semibold text-xs text-slate-200 uppercase tracking-wider truncate block"></span>
+            <span id="sidebarDocCount" class="text-[11px] text-slate-500"></span>
+          </div>
+          <div class="flex items-center gap-1">
+            <button onclick="triggerLintAudit()" title="Auditar Projeto (memory_lint)" class="p-1 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+            </button>
+            <button onclick="downloadProjectZip()" title="Download ZIP de todo o projeto" class="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            </button>
+            <button onclick="openNewDocModal()" title="Criar Nova Documentação" class="p-1 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabs: Documentos vs Histórico vs Handoffs -->
+        <div class="flex border-b border-slate-800 bg-slate-950/40 text-xs">
+          <button id="tabBtnDocs" onclick="switchSidebarTab('docs')" class="flex-1 py-2 text-center font-medium border-b-2 border-blue-500 text-blue-400 flex items-center justify-center gap-1 transition">
+            <span>Docs</span>
+          </button>
+          <button id="tabBtnHistory" onclick="switchSidebarTab('history')" class="flex-1 py-2 text-center font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 transition">
+            <span>Sessões</span>
+            <span id="historyBadgeCount" class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-400">0</span>
+          </button>
+          <button id="tabBtnHandoffs" onclick="switchSidebarTab('handoffs')" class="flex-1 py-2 text-center font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 transition">
+            <span>Handoffs</span>
+            <span id="handoffsBadgeCount" class="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-950 text-amber-300 border border-amber-800/80">0</span>
+          </button>
+        </div>
+
+        <!-- Aba Docs (com suporte a drag and drop de arquivos .md) -->
+        <div id="tabContentDocs" class="flex-1 flex flex-col overflow-hidden" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDropFile(event)">
+          <div class="p-2 border-b border-slate-800/80 flex items-center gap-1.5">
+            <input
+              id="pageFilterInput"
+              type="text"
+              placeholder="Filtrar arquivos..."
+              class="w-full bg-slate-950/60 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-300 placeholder-slate-500 focus:outline-none focus:border-slate-700"
+              oninput="filterSidebarPages()"
+            >
+          </div>
+          <div id="pagesListContainer" class="flex-1 overflow-y-auto p-2 space-y-3">
+            <!-- Pastas e arquivos agrupados -->
+          </div>
+          <div class="p-2 border-t border-slate-800/60 text-[10px] text-slate-500 text-center bg-slate-950/20">
+            Dica: arraste arquivos <code>.md</code> aqui para fazer upload
+          </div>
+        </div>
+
+        <!-- Aba Histórico -->
+        <div id="tabContentHistory" class="flex-1 flex flex-col overflow-hidden hidden">
+          <div id="historyListContainer" class="flex-1 overflow-y-auto p-2 space-y-2">
+            <!-- Lista de sessões gravadas -->
+          </div>
+        </div>
+
+        <!-- Aba Handoffs -->
+        <div id="tabContentHandoffs" class="flex-1 flex flex-col overflow-hidden hidden">
+          <div id="handoffsListContainer" class="flex-1 overflow-y-auto p-2 space-y-2">
+            <!-- Lista de handoffs pendentes -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right Area: Document Viewer / Editor -->
+      <main class="flex-1 flex flex-col overflow-hidden bg-slate-950">
+        <!-- Document Action Bar -->
+        <div id="docHeader" class="h-12 border-b border-slate-800 px-4 flex items-center justify-between shrink-0 bg-slate-900/30">
+          <div class="flex items-center gap-2 overflow-hidden">
+            <span id="docPath" class="text-xs font-mono text-slate-300 truncate">Selecione um arquivo ao lado</span>
+            <span id="docTierBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider"></span>
+            <span id="docPinnedBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-amber-950 text-amber-300 border border-amber-800">pinned</span>
+          </div>
+
+          <div id="docActions" class="hidden flex items-center gap-1.5">
+            <!-- Copy Raw Markdown -->
+            <button onclick="copyCurrentMarkdown()" title="Copiar Markdown bruto" class="p-1.5 text-xs rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-slate-100 flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+              <span id="btnCopyLabel" class="hidden sm:inline">Copiar</span>
+            </button>
+
+            <!-- Mode Buttons -->
+            <div class="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 mr-1">
+              <button id="btnViewMode" onclick="setDocMode('view')" class="px-2.5 py-1 text-xs rounded-md bg-blue-600 text-white font-medium">Ver</button>
+              <button id="btnEditMode" onclick="setDocMode('edit')" class="px-2.5 py-1 text-xs rounded-md text-slate-400 hover:text-slate-200">Editar</button>
+            </div>
+
+            <!-- Single Doc Download -->
+            <button onclick="downloadCurrentDoc()" title="Baixar arquivo (.md)" class="px-2.5 py-1 text-xs rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-emerald-400 flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              <span class="hidden sm:inline">Baixar</span>
+            </button>
+
+            <!-- Delete Doc -->
+            <button onclick="confirmDeleteDoc()" title="Deletar este documento" class="px-2.5 py-1 text-xs rounded-md bg-rose-950/40 hover:bg-rose-900/60 border border-rose-900/50 text-rose-300 flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+              <span class="hidden sm:inline">Deletar</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- View Mode: Markdown Content + Feedback Bar -->
+        <div id="docViewer" class="flex-1 overflow-y-auto p-8 max-w-4xl w-full mx-auto">
+          <div id="docMarkdownBody" class="markdown-body text-slate-300">
+            <div class="text-center text-slate-500 text-sm py-20">
+              Nenhuma documentação selecionada. Clique em um arquivo na barra lateral.
+            </div>
+          </div>
+
+          <!-- Document Quality Feedback Toolbar -->
+          <div id="docFeedbackSection" class="hidden mt-12 pt-6 border-t border-slate-800/80 flex items-center justify-between text-xs">
+            <div class="text-slate-400">
+              Esta documentação ainda é válida para os agentes?
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="sendDocFeedback('helpful')" class="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-emerald-400 flex items-center gap-1.5 transition">
+                <span>👍</span> <span>Útil / Atual</span>
+              </button>
+              <button onclick="sendDocFeedback('stale')" class="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-400 flex items-center gap-1.5 transition">
+                <span>⚠️</span> <span>Desatualizado</span>
+              </button>
+              <button onclick="sendDocFeedback('wrong')" class="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-800 text-rose-400 flex items-center gap-1.5 transition">
+                <span>❌</span> <span>Incorreto</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit Mode: Code / Markdown Editor -->
+        <div id="docEditor" class="flex-1 flex flex-col overflow-hidden hidden">
+          <div class="flex-1 p-4 flex flex-col">
+            <textarea
+              id="editorTextarea"
+              class="w-full flex-1 bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-sm text-slate-200 focus:outline-none focus:border-blue-500 resize-none"
+              placeholder="# Título do documento..."
+              spellcheck="false"
+            ></textarea>
+          </div>
+          <div class="h-14 border-t border-slate-800 px-4 bg-slate-900/60 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-4 text-xs text-slate-400">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" id="editPinned" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-0">
+                <span>Pinned (não decai)</span>
+              </label>
+              <label class="flex items-center gap-1.5">
+                <span>Tier:</span>
+                <select id="editTier" class="bg-slate-950 border border-slate-800 rounded px-2 py-0.5 text-xs text-slate-300">
+                  <option value="semantic">semantic</option>
+                  <option value="procedural">procedural</option>
+                  <option value="episodic">episodic</option>
+                  <option value="working">working</option>
+                </select>
+              </label>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="setDocMode('view')" class="px-3 py-1.5 text-xs rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300">Cancelar</button>
+              <button id="btnSaveDoc" onclick="saveCurrentDoc()" class="px-4 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-500 font-medium text-white flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                <span>Salvar Alterações</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Modal Nova Documentação -->
+  <div id="newDocModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 w-full max-w-lg shadow-xl">
+      <h3 class="text-base font-semibold text-slate-100 mb-4">Nova Documentação no Projeto</h3>
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">Caminho do arquivo (relativo ao wiki):</label>
+          <input
+            id="newDocPath"
+            type="text"
+            placeholder="ex: notes/meu-topico.md ou _rules/minha-regra.md"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+          >
+          <p class="text-[11px] text-slate-500 mt-1">Convenção de pastas: <code>notes/</code>, <code>_rules/</code>, <code>concepts/</code>, <code>runbooks/</code>.</p>
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">Conteúdo Inicial (Markdown):</label>
+          <textarea
+            id="newDocBody"
+            rows="6"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+            placeholder="# Título do Documento&#10;&#10;Escreva o conteúdo aqui..."
+          ></textarea>
+        </div>
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" id="newDocPinned" class="rounded border-slate-700 bg-slate-950 text-blue-600 focus:ring-0">
+            <span class="text-slate-300">Pinned</span>
+          </label>
+          <label class="flex items-center gap-1.5">
+            <span class="text-slate-400">Tier:</span>
+            <select id="newDocTier" class="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-300">
+              <option value="semantic">semantic</option>
+              <option value="procedural">procedural</option>
+              <option value="episodic">episodic</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button onclick="closeNewDocModal()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg">Cancelar</button>
+        <button onclick="createDocSubmit()" class="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg">Criar Página</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Estado da Aplicação
+    let currentWorkspace = 'default';
+    let currentProject = null;
+    let currentDocPath = null;
+    let currentDocData = null;
+    let currentPagesList = [];
+    let currentActiveTab = 'docs'; // 'docs' ou 'history'
+    let currentHistoryData = null;
+    let currentSessionId = null;
+
+    // Inicialização
+    document.addEventListener('DOMContentLoaded', () => {
+      loadProjects();
+    });
+
+    function switchSidebarTab(tab) {
+      currentActiveTab = tab;
+      const tabBtnDocs = document.getElementById('tabBtnDocs');
+      const tabBtnHistory = document.getElementById('tabBtnHistory');
+      const tabBtnHandoffs = document.getElementById('tabBtnHandoffs');
+      const tabContentDocs = document.getElementById('tabContentDocs');
+      const tabContentHistory = document.getElementById('tabContentHistory');
+      const tabContentHandoffs = document.getElementById('tabContentHandoffs');
+
+      // Reset tabs style
+      [tabBtnDocs, tabBtnHistory, tabBtnHandoffs].forEach(btn => {
+        btn.className = 'flex-1 py-2 text-center font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1 transition';
+      });
+      [tabContentDocs, tabContentHistory, tabContentHandoffs].forEach(c => c.classList.add('hidden'));
+
+      if (tab === 'docs') {
+        tabBtnDocs.className = 'flex-1 py-2 text-center font-medium border-b-2 border-blue-500 text-blue-400 flex items-center justify-center gap-1 transition';
+        tabContentDocs.classList.remove('hidden');
+      } else if (tab === 'history') {
+        tabBtnHistory.className = 'flex-1 py-2 text-center font-medium border-b-2 border-blue-500 text-blue-400 flex items-center justify-center gap-1 transition';
+        tabContentHistory.classList.remove('hidden');
+        if (!currentHistoryData) loadProjectHistory();
+      } else if (tab === 'handoffs') {
+        tabBtnHandoffs.className = 'flex-1 py-2 text-center font-medium border-b-2 border-blue-500 text-blue-400 flex items-center justify-center gap-1 transition';
+        tabContentHandoffs.classList.remove('hidden');
+        renderHandoffsList();
+      }
+    }
+
+    async function loadProjects() {
+      try {
+        const res = await fetch('/api/projects');
+        const projects = await res.json();
+        renderProjects(projects);
+      } catch (err) {
+        alert('Erro ao carregar projetos: ' + err.message);
+      }
+    }
+
+    // Uma metrica do card. Fica fora quando o valor e zero, para o card nao
+    // virar uma fileira de zeros nos projetos vazios.
+    function projectStat(icon, value, label, tone = 'text-slate-400') {
+      if (!value) return '';
+      return `<span class="inline-flex items-center gap-1 ${tone}" title="${label}">
+        <span class="opacity-70">${icon}</span><span class="font-medium">${value}</span>
+      </span>`;
+    }
+
+    function renderProjects(projects) {
+      const grid = document.getElementById('projectsGrid');
+      grid.innerHTML = '';
+
+      projects.forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'rounded-xl border border-slate-800 bg-slate-900/50 hover:bg-slate-900 hover:border-slate-700 transition p-5 flex flex-col justify-between cursor-pointer group';
+        card.onclick = () => openProject(p.workspace_name, p.project_name);
+
+        const updatedText = p.last_updated ? new Date(p.last_updated).toLocaleString('pt-BR') : 'Sem updates recentes';
+        const st = p.stats;
+
+        const stats = st ? [
+          projectStat('🗂️', st.sessions, `${st.sessions} sessões registradas`),
+          projectStat('💬', st.observations, `${st.observations} observações capturadas`),
+          projectStat('📥', st.pending_handoffs, `${st.pending_handoffs} handoff(s) pendente(s)`, 'text-amber-400'),
+          projectStat('🔗', st.orphans, `${st.orphans} página(s) sem nenhum [[wikilink]] entrando ou saindo`, 'text-slate-500'),
+          projectStat('⚠️', st.rot, `${st.rot} página(s) precisando de atenção: episódica parada há mais de 30 dias, ou título duplicado`, 'text-rose-400')
+        ].filter(Boolean).join('') : '';
+
+        const statsRow = stats
+          ? `<div class="flex items-center gap-3 text-[11px] mb-1">${stats}</div>`
+          : `<div class="text-[11px] text-slate-600 mb-1">${st ? 'Projeto vazio' : 'Métricas indisponíveis'}</div>`;
+
+        card.innerHTML = `
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-mono text-slate-500">${p.workspace_name}/</span>
+              <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 group-hover:bg-blue-900/40 group-hover:text-blue-300 transition">
+                ${p.page_count} ${p.page_count === 1 ? 'doc' : 'docs'}
+              </span>
+            </div>
+            <h3 class="text-base font-bold text-slate-100 group-hover:text-blue-400 transition mb-2">
+              ${p.project_name}
+            </h3>
+            ${statsRow}
+          </div>
+          <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
+            <span>${updatedText}</span>
+            <button onclick="event.stopPropagation(); downloadZipDirect('${p.workspace_name}', '${p.project_name}')" title="Baixar ZIP" class="p-1 hover:text-emerald-400 transition">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            </button>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function goToProjects() {
+      document.getElementById('projectsView').classList.remove('hidden');
+      document.getElementById('searchView').classList.add('hidden');
+      document.getElementById('projectDetailView').classList.add('hidden');
+      currentProject = null;
+      currentDocPath = null;
+      updateBreadcrumb();
+    }
+
+    async function openProject(workspace, project) {
+      currentWorkspace = workspace;
+      currentProject = project;
+      currentDocPath = null;
+      currentDocData = null;
+      currentHistoryData = null;
+      currentSessionId = null;
+      switchSidebarTab('docs');
+
+      document.getElementById('projectsView').classList.add('hidden');
+      document.getElementById('searchView').classList.add('hidden');
+      document.getElementById('projectDetailView').classList.remove('hidden');
+
+      document.getElementById('sidebarProjectTitle').innerText = `${workspace}/${project}`;
+      updateBreadcrumb();
+
+      // Reset viewer
+      document.getElementById('docHeader').classList.add('hidden');
+      document.getElementById('docViewer').innerHTML = `
+        <div id="docMarkdownBody" class="markdown-body text-slate-300">
+          <div class="text-center text-slate-500 text-sm py-20">
+            Nenhuma documentação selecionada. Clique em um arquivo na barra lateral.
+          </div>
+        </div>
+      `;
+
+      await loadProjectPages();
+      loadProjectHistory(); // Carrega contagem do histórico em background
+    }
+
+    async function loadProjectPages() {
+      try {
+        const res = await fetch(`/api/pages?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}`);
+        const pages = await res.json();
+        currentPagesList = pages;
+        document.getElementById('sidebarDocCount').innerText = `${pages.length} ${pages.length === 1 ? 'documento' : 'documentos'}`;
+        renderSidebarPages(pages);
+      } catch (err) {
+        alert('Erro ao carregar lista de páginas: ' + err.message);
+      }
+    }
+
+    // Marcadores de saude de uma pagina. Espelham os icones do card de projeto.
+    const HEALTH_FLAGS = {
+      orphan:    { icon: '🔗', tone: 'text-slate-600', title: 'Órfã: nenhum [[wikilink]] entra ou sai desta página' },
+      stale:     { icon: '⌛', tone: 'text-rose-400',  title: 'Episódica sem atualização há mais de 30 dias' },
+      duplicate: { icon: '⧉',  tone: 'text-rose-400',  title: 'Outra página deste projeto tem o mesmo título' }
+    };
+
+    function renderSidebarPages(pages) {
+      const container = document.getElementById('pagesListContainer');
+      container.innerHTML = '';
+
+      if (!pages || pages.length === 0) {
+        container.innerHTML = '<div class="text-xs text-slate-500 p-2">Nenhum documento encontrado.</div>';
+        return;
+      }
+
+      // Agrupa por pasta (prefixo até a primeira barra)
+      const groups = {};
+      pages.forEach(p => {
+        const parts = p.path.split('/');
+        let folder = 'raiz';
+        if (parts.length > 1) {
+          folder = parts[0] + '/';
+        }
+        if (!groups[folder]) groups[folder] = [];
+        groups[folder].push(p);
+      });
+
+      Object.keys(groups).sort().forEach(folder => {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'mb-3';
+
+        const header = document.createElement('div');
+        header.className = 'text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-2 py-1 flex items-center gap-1.5';
+        header.innerHTML = `
+          <svg class="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+          <span>${folder}</span>
+        `;
+        groupEl.appendChild(header);
+
+        const list = document.createElement('ul');
+        list.className = 'space-y-0.5 mt-0.5';
+
+        groups[folder].forEach(p => {
+          const item = document.createElement('li');
+          const isSelected = currentDocPath === p.path;
+          item.className = `px-2.5 py-1.5 rounded-lg text-xs cursor-pointer truncate transition flex items-center justify-between group ${
+            isSelected ? 'bg-blue-600/20 text-blue-300 font-medium border border-blue-500/30' : 'text-slate-300 hover:bg-slate-800/80 hover:text-slate-100'
+          }`;
+          item.onclick = () => loadDoc(p.path);
+
+          // Mesmos marcadores dos cards da tela inicial, agora na pagina que os gera.
+          const flags = (p.health || []).map(f => HEALTH_FLAGS[f]).filter(Boolean);
+          const flagIcons = flags.map(f => `<span class="${f.tone}" title="${f.title}">${f.icon}</span>`).join('');
+
+          item.innerHTML = `
+            <span class="truncate flex items-center gap-1.5" title="${p.title || p.path}">
+              ${flagIcons}<span class="truncate">${p.title || p.path}</span>
+            </span>
+            <span class="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition shrink-0 ml-1">.md</span>
+          `;
+          list.appendChild(item);
+        });
+
+        groupEl.appendChild(list);
+        container.appendChild(groupEl);
+      });
+    }
+
+    function filterSidebarPages() {
+      const term = document.getElementById('pageFilterInput').value.toLowerCase();
+      if (!term) {
+        renderSidebarPages(currentPagesList);
+        return;
+      }
+      const filtered = currentPagesList.filter(p =>
+        p.path.toLowerCase().includes(term) || (p.title && p.title.toLowerCase().includes(term))
+      );
+      renderSidebarPages(filtered);
+    }
+
+    async function loadDoc(docPath) {
+      currentDocPath = docPath;
+      renderSidebarPages(currentPagesList); // re-render para atualizar classe ativa
+      updateBreadcrumb();
+
+      try {
+        const res = await fetch(`/api/page?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}&path=${encodeURIComponent(docPath)}`);
+        const page = await res.json();
+        currentDocData = page;
+
+        document.getElementById('docHeader').classList.remove('hidden');
+        document.getElementById('docActions').classList.remove('hidden');
+        document.getElementById('docPath').innerText = page.path;
+
+        // Metadados badges
+        const tierBadge = document.getElementById('docTierBadge');
+        if (page.frontmatter?.tier) {
+          tierBadge.innerText = page.frontmatter.tier;
+          tierBadge.className = 'px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-blue-950 text-blue-300 border border-blue-800';
+          tierBadge.classList.remove('hidden');
+        } else {
+          tierBadge.classList.add('hidden');
+        }
+
+        const pinnedBadge = document.getElementById('docPinnedBadge');
+        if (page.frontmatter?.pinned) {
+          pinnedBadge.classList.remove('hidden');
+        } else {
+          pinnedBadge.classList.add('hidden');
+        }
+
+        // Render Markdown
+        setDocMode('view');
+      } catch (err) {
+        alert('Erro ao carregar documento: ' + err.message);
+      }
+    }
+
+    function setDocMode(mode) {
+      const btnView = document.getElementById('btnViewMode');
+      const btnEdit = document.getElementById('btnEditMode');
+      const docViewer = document.getElementById('docViewer');
+      const docEditor = document.getElementById('docEditor');
+      const feedbackSec = document.getElementById('docFeedbackSection');
+
+      if (mode === 'view') {
+        btnView.className = 'px-2.5 py-1 text-xs rounded-md bg-blue-600 text-white font-medium';
+        btnEdit.className = 'px-2.5 py-1 text-xs rounded-md text-slate-400 hover:text-slate-200';
+        docViewer.classList.remove('hidden');
+        docEditor.classList.add('hidden');
+        if (feedbackSec) feedbackSec.classList.remove('hidden');
+
+        if (currentDocData && currentDocData.body) {
+          let bodyEl = document.getElementById('docMarkdownBody');
+          if (!bodyEl) {
+            docViewer.innerHTML = '<div id="docMarkdownBody" class="markdown-body text-slate-300"></div>';
+            bodyEl = document.getElementById('docMarkdownBody');
+          }
+          bodyEl.innerHTML = marked.parse(currentDocData.body);
+
+          // Syntax Highlighting com highlight.js
+          bodyEl.querySelectorAll('pre code').forEach((block) => {
+            if (!block.classList.contains('language-mermaid')) {
+              hljs.highlightElement(block);
+            }
+          });
+
+          // Renderização de diagramas Mermaid
+          bodyEl.querySelectorAll('.language-mermaid, pre.mermaid').forEach(async (el, idx) => {
+            const code = el.innerText;
+            const insertId = 'mermaid-' + idx + '-' + Date.now();
+            try {
+              const { svg } = await mermaid.render(insertId, code);
+              const parent = el.closest('pre') || el;
+              const wrapper = document.createElement('div');
+              wrapper.className = 'my-4 p-4 rounded-lg bg-slate-900 border border-slate-800 flex justify-center';
+              wrapper.innerHTML = svg;
+              parent.replaceWith(wrapper);
+            } catch (err) {
+              console.warn('Mermaid render error:', err);
+            }
+          });
+        }
+      } else {
+        btnEdit.className = 'px-2.5 py-1 text-xs rounded-md bg-blue-600 text-white font-medium';
+        btnView.className = 'px-2.5 py-1 text-xs rounded-md text-slate-400 hover:text-slate-200';
+        docViewer.classList.add('hidden');
+        docEditor.classList.remove('hidden');
+        if (feedbackSec) feedbackSec.classList.add('hidden');
+
+        document.getElementById('editorTextarea').value = currentDocData ? currentDocData.body : '';
+        document.getElementById('editPinned').checked = !!currentDocData?.frontmatter?.pinned;
+        document.getElementById('editTier').value = currentDocData?.frontmatter?.tier || 'semantic';
+      }
+    }
+
+    async function saveCurrentDoc() {
+      if (!currentProject || !currentDocPath) return;
+
+      const newBody = document.getElementById('editorTextarea').value;
+      const pinned = document.getElementById('editPinned').checked;
+      const tier = document.getElementById('editTier').value;
+
+      const btnSave = document.getElementById('btnSaveDoc');
+      btnSave.disabled = true;
+      btnSave.innerText = 'Salvando...';
+
+      try {
+        const res = await fetch('/api/page', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace: currentWorkspace,
+            project: currentProject,
+            path: currentDocPath,
+            body: newBody,
+            pinned,
+            tier
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao salvar');
+
+        currentDocData.body = newBody;
+        if (!currentDocData.frontmatter) currentDocData.frontmatter = {};
+        currentDocData.frontmatter.pinned = pinned;
+        currentDocData.frontmatter.tier = tier;
+
+        setDocMode('view');
+        await loadProjectPages();
+      } catch (err) {
+        alert('Erro ao salvar documento: ' + err.message);
+      } finally {
+        btnSave.disabled = false;
+        btnSave.innerHTML = `
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+          <span>Salvar Alterações</span>
+        `;
+      }
+    }
+
+    async function confirmDeleteDoc() {
+      if (!currentProject || !currentDocPath) return;
+      const ok = confirm(`Tem certeza que deseja DELETAR o documento "${currentDocPath}" do ai-memory?`);
+      if (!ok) return;
+
+      try {
+        const res = await fetch(`/api/page?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}&path=${encodeURIComponent(currentDocPath)}`, {
+          method: 'DELETE'
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao deletar');
+
+        currentDocPath = null;
+        currentDocData = null;
+        document.getElementById('docHeader').classList.add('hidden');
+        document.getElementById('docViewer').innerHTML = `
+          <div id="docMarkdownBody" class="markdown-body text-slate-300">
+            <div class="text-center text-slate-500 text-sm py-20">
+              Documento deletado com sucesso. Selecione outro arquivo ao lado.
+            </div>
+          </div>
+        `;
+        await loadProjectPages();
+      } catch (err) {
+        alert('Erro ao deletar: ' + err.message);
+      }
+    }
+
+    function downloadCurrentDoc() {
+      if (!currentProject || !currentDocPath) return;
+      window.location.href = `/api/download/file?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}&path=${encodeURIComponent(currentDocPath)}`;
+    }
+
+    function downloadProjectZip() {
+      if (!currentProject) return;
+      downloadZipDirect(currentWorkspace, currentProject);
+    }
+
+    function downloadZipDirect(workspace, project) {
+      window.location.href = `/api/download/zip?workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`;
+    }
+
+    // Modal Criação de Nova Doc
+    function openNewDocModal() {
+      document.getElementById('newDocPath').value = '';
+      document.getElementById('newDocBody').value = '';
+      document.getElementById('newDocPinned').checked = false;
+      document.getElementById('newDocTier').value = 'semantic';
+      document.getElementById('newDocModal').classList.remove('hidden');
+    }
+
+    function closeNewDocModal() {
+      document.getElementById('newDocModal').classList.add('hidden');
+    }
+
+    async function createDocSubmit() {
+      const docPath = document.getElementById('newDocPath').value.trim();
+      const body = document.getElementById('newDocBody').value.trim();
+      const pinned = document.getElementById('newDocPinned').checked;
+      const tier = document.getElementById('newDocTier').value;
+
+      if (!docPath) {
+        alert('Por favor informe o caminho do arquivo (ex: notes/meu-doc.md)');
+        return;
+      }
+      if (!body) {
+        alert('Por favor informe o conteúdo do arquivo');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/page', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace: currentWorkspace,
+            project: currentProject,
+            path: docPath,
+            body,
+            pinned,
+            tier
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao criar');
+
+        closeNewDocModal();
+        await loadProjectPages();
+        await loadDoc(docPath);
+      } catch (err) {
+        alert('Erro ao criar página: ' + err.message);
+      }
+    }
+
+    // Busca FTS5
+    async function doSearch() {
+      const q = document.getElementById('searchInput').value.trim();
+      if (!q) return;
+
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const results = await res.json();
+
+        document.getElementById('projectsView').classList.add('hidden');
+        document.getElementById('projectDetailView').classList.add('hidden');
+        document.getElementById('searchView').classList.remove('hidden');
+
+        document.getElementById('searchQueryLabel').innerText = q;
+        renderSearchResults(results);
+      } catch (err) {
+        alert('Erro na busca: ' + err.message);
+      }
+    }
+
+    function renderSearchResults(results) {
+      const container = document.getElementById('searchResults');
+      container.innerHTML = '';
+
+      if (!results || results.length === 0) {
+        container.innerHTML = '<div class="text-xs text-slate-500 py-6">Nenhum resultado encontrado para o termo pesquisado.</div>';
+        return;
+      }
+
+      results.forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'p-4 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-700 cursor-pointer transition';
+        item.onclick = async () => {
+          await openProject(r.workspace || 'default', r.project);
+          await loadDoc(r.path);
+        };
+
+        item.innerHTML = `
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-mono text-blue-400 font-medium">${r.project}/${r.path}</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">${r.kind || 'doc'}</span>
+          </div>
+          <h4 class="text-sm font-semibold text-slate-100 mb-1.5">${r.title || r.path}</h4>
+          <div class="text-xs text-slate-400 line-clamp-2 leading-relaxed">${r.snippet || ''}</div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function updateBreadcrumb() {
+      const b = document.getElementById('breadcrumb');
+      if (!currentProject) {
+        b.innerHTML = '';
+        b.classList.add('hidden');
+        return;
+      }
+      b.classList.remove('hidden');
+      let html = `
+        <a href="javascript:void(0)" onclick="goToProjects()" class="hover:text-slate-200">projetos</a>
+        <span>/</span>
+        <span class="text-slate-300 font-medium">${currentWorkspace}/${currentProject}</span>
+      `;
+      if (currentDocPath) {
+        html += `
+          <span>/</span>
+          <span class="text-blue-400 truncate max-w-xs font-mono">${currentDocPath}</span>
+        `;
+      }
+      b.innerHTML = html;
+    }
+
+    // Histórico de Sessões
+    async function loadProjectHistory() {
+      if (!currentProject) return;
+      try {
+        const res = await fetch(`/api/sessions?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}`);
+        const data = await res.json();
+        currentHistoryData = data;
+
+        const sessions = data.sessions || [];
+        document.getElementById('historyBadgeCount').innerText = sessions.length;
+        document.getElementById('handoffsBadgeCount').innerText = data.briefing?.pending_handoff_count || 0;
+
+        renderHistoryList(sessions, data.briefing);
+      } catch (err) {
+        console.error('Erro ao carregar histórico:', err);
+      }
+    }
+
+    function renderHistoryList(sessions, briefing) {
+      const container = document.getElementById('historyListContainer');
+      container.innerHTML = '';
+
+      if (sessions.length === 0) {
+        container.innerHTML = '<div class="text-xs text-slate-500 p-3 text-center">Nenhuma sessão encontrada para este projeto.</div>';
+        return;
+      }
+
+      // As observações do card da tela inicial moram aqui: cada sessão abre a
+      // própria timeline, consolidada em página wiki ou não.
+      const totalObs = sessions.reduce((n, s) => n + (s.observation_count || 0), 0)
+        || briefing?.counts?.observations || 0;
+
+      const summaryCard = document.createElement('div');
+      summaryCard.className = 'p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 text-xs text-slate-400 mb-3';
+      summaryCard.innerHTML = `
+        <div class="font-semibold text-slate-200 mb-1 flex items-center justify-between">
+          <span>Resumo do Histórico</span>
+          <span class="text-[11px] text-blue-400">${sessions.length} ${sessions.length === 1 ? 'sessão' : 'sessões'}</span>
+        </div>
+        <div class="text-[11px] text-slate-400">💬 ${totalObs} observações — abra uma sessão para ler</div>
+      `;
+      container.appendChild(summaryCard);
+
+      sessions.forEach(s => {
+        const item = document.createElement('div');
+        const isSelected = currentSessionId === s.session_id
+          || (s.page && currentDocPath === s.page.path);
+
+        item.className = `p-2.5 rounded-lg border text-xs cursor-pointer transition flex flex-col gap-1 ${
+          isSelected
+            ? 'bg-blue-600/20 text-blue-300 font-medium border-blue-500/30'
+            : 'bg-slate-900/40 border-slate-800/80 text-slate-300 hover:bg-slate-800 hover:border-slate-700'
+        }`;
+        item.onclick = () => openSession(s);
+
+        const badge = s.page
+          ? '<span class="text-[10px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">consolidada</span>'
+          : '<span class="text-[10px] px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800">bruta</span>';
+
+        const when = s.started_at ? new Date(s.started_at).toLocaleString('pt-BR') : '';
+        const title = s.page?.title || s.cwd || s.agent_kind || 'Sessão';
+
+        item.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[10px] text-blue-400">#${s.session_id.substring(0, 8)}</span>
+            ${badge}
+          </div>
+          <div class="font-medium text-slate-200 truncate" title="${title}">${title}</div>
+          <div class="flex items-center justify-between text-[10px] text-slate-500">
+            <span>${when}</span>
+            <span title="${s.observation_count} observações">💬 ${s.observation_count || 0}</span>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    // Sessão consolidada abre a página wiki e a timeline; sessão bruta, só a timeline.
+    function openSession(s) {
+      currentSessionId = s.session_id;
+      if (s.page) return openSessionDetail(s.page);
+      return openRawSessionDetail(s);
+    }
+
+    async function openSessionDetail(sessionDoc) {
+      await loadDoc(sessionDoc.path);
+      const sessionId = sessionDoc.path.replace('sessions/', '').replace('.md', '');
+      currentSessionId = sessionId;
+      loadSessionObservations(sessionId);
+    }
+
+    async function openRawSessionDetail(rawSession) {
+      currentSessionId = rawSession.session_id;
+      currentDocPath = null;
+      currentDocData = null;
+      updateBreadcrumb();
+
+      document.getElementById('docHeader').classList.remove('hidden');
+      document.getElementById('docActions').classList.add('hidden');
+      document.getElementById('docPath').innerText = `Sessão: ${rawSession.session_id}`;
+      document.getElementById('docTierBadge').classList.add('hidden');
+      document.getElementById('docPinnedBadge').classList.add('hidden');
+
+      const docViewer = document.getElementById('docViewer');
+      docViewer.classList.remove('hidden');
+      document.getElementById('docEditor').classList.add('hidden');
+
+      docViewer.innerHTML = `
+        <div class="mb-6 p-4 rounded-xl border border-slate-800 bg-slate-900/40">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="text-base font-bold text-slate-100 font-mono">Sessão ${rawSession.session_id}</h2>
+            <div class="flex items-center gap-2">
+              <button onclick="consolidateSessionLLM('${rawSession.session_id}')" class="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-xs text-white font-medium flex items-center gap-1.5 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                <span>Consolidar via LLM</span>
+              </button>
+              <span class="px-2 py-0.5 rounded text-xs bg-amber-950 text-amber-300 border border-amber-800">histórico bruto</span>
+            </div>
+          </div>
+          <div class="text-xs text-slate-400 space-y-1">
+            ${rawSession.agent_kind ? `<div><strong class="text-slate-300">Agente:</strong> ${rawSession.agent_kind}</div>` : ''}
+            ${rawSession.cwd ? `<div><strong class="text-slate-300">CWD:</strong> <code class="font-mono text-slate-200">${rawSession.cwd}</code></div>` : ''}
+            ${rawSession.started_at ? `<div><strong class="text-slate-300">Iniciada em:</strong> ${new Date(rawSession.started_at).toLocaleString('pt-BR')}</div>` : ''}
+          </div>
+        </div>
+        <div id="rawTimelineContainer" class="space-y-3 font-mono text-xs">
+          <div class="text-slate-500 text-xs py-4 text-center">Carregando observações da sessão...</div>
+        </div>
+      `;
+
+      try {
+        const res = await fetch(`/api/session/observations?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}&session_id=${encodeURIComponent(rawSession.session_id)}&limit=100`);
+        const data = await res.json();
+        const obsContainer = document.getElementById('rawTimelineContainer');
+        if (obsContainer && data?.observations) {
+          obsContainer.innerHTML = '';
+          data.observations.forEach(o => {
+            const row = document.createElement('div');
+            row.className = 'p-3 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-300';
+
+            let badgeColor = 'bg-slate-800 text-slate-400';
+            if (o.kind === 'user-prompt') badgeColor = 'bg-blue-950 text-blue-300 border border-blue-800';
+            if (o.kind === 'session-start') badgeColor = 'bg-purple-950 text-purple-300 border border-purple-800';
+            if (o.kind === 'stop' || o.kind === 'session-end') badgeColor = 'bg-emerald-950 text-emerald-300 border border-emerald-800';
+
+            const timeStr = o.created_at ? new Date(o.created_at).toLocaleTimeString('pt-BR') : '';
+
+            row.innerHTML = `
+              <div class="flex items-center justify-between mb-1.5 font-sans">
+                <div class="flex items-center gap-2">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${badgeColor}">${o.kind}</span>
+                  <span class="text-slate-200 font-semibold text-xs truncate max-w-md">${o.title || ''}</span>
+                </div>
+                <span class="text-[10px] text-slate-500">${timeStr}</span>
+              </div>
+              ${o.body ? `<pre class="mt-1 text-slate-300 text-[11px] whitespace-pre-wrap overflow-x-auto bg-slate-950/80 p-2.5 rounded border border-slate-900 max-h-48 leading-relaxed">${escapeHtml(o.body)}</pre>` : ''}
+            `;
+            obsContainer.appendChild(row);
+          });
+        }
+      } catch (err) {
+        console.error('Erro ao carregar observações da sessão bruta:', err);
+      }
+    }
+
+    async function loadSessionObservations(sessionId) {
+      try {
+        const res = await fetch(`/api/session/observations?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}&session_id=${encodeURIComponent(sessionId)}&limit=100`);
+        const data = await res.json();
+        if (data && data.observations && data.observations.length > 0) {
+          renderObservationsTimeline(data.observations, data.total);
+        }
+      } catch (err) {
+        console.warn('Não foi possível carregar timeline de observações:', err);
+      }
+    }
+
+    function renderObservationsTimeline(observations, total) {
+      const docViewer = document.getElementById('docViewer');
+
+      const timelineSection = document.createElement('div');
+      timelineSection.className = 'mt-10 pt-6 border-t border-slate-800';
+      timelineSection.innerHTML = `
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+            <span>Timeline da Sessão</span>
+            <span class="text-xs font-normal text-slate-400 font-mono">(${observations.length} de ${total || observations.length} eventos)</span>
+          </h3>
+        </div>
+        <div class="space-y-3 font-mono text-xs" id="timelineContainer"></div>
+      `;
+
+      const container = timelineSection.querySelector('#timelineContainer');
+
+      observations.forEach(o => {
+        const row = document.createElement('div');
+        row.className = 'p-3 rounded-lg bg-slate-900/60 border border-slate-800 text-slate-300';
+
+        let badgeColor = 'bg-slate-800 text-slate-400';
+        if (o.kind === 'user-prompt') badgeColor = 'bg-blue-950 text-blue-300 border border-blue-800';
+        if (o.kind === 'session-start') badgeColor = 'bg-purple-950 text-purple-300 border border-purple-800';
+        if (o.kind === 'stop' || o.kind === 'session-end') badgeColor = 'bg-emerald-950 text-emerald-300 border border-emerald-800';
+
+        const timeStr = o.created_at ? new Date(o.created_at).toLocaleTimeString('pt-BR') : '';
+
+        row.innerHTML = `
+          <div class="flex items-center justify-between mb-1.5 font-sans">
+            <div class="flex items-center gap-2">
+              <span class="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${badgeColor}">${o.kind}</span>
+              <span class="text-slate-200 font-semibold text-xs truncate max-w-md">${o.title || ''}</span>
+            </div>
+            <span class="text-[10px] text-slate-500">${timeStr}</span>
+          </div>
+          ${o.body ? `<pre class="mt-1 text-slate-300 text-[11px] whitespace-pre-wrap overflow-x-auto bg-slate-950/80 p-2.5 rounded border border-slate-900 max-h-40 leading-relaxed">${escapeHtml(o.body)}</pre>` : ''}
+        `;
+        container.appendChild(row);
+      });
+
+      docViewer.appendChild(timelineSection);
+    }
+
+    // 1. Copiar Markdown Bruto
+    function copyCurrentMarkdown() {
+      if (!currentDocData || !currentDocData.body) return;
+      navigator.clipboard.writeText(currentDocData.body).then(() => {
+        const lbl = document.getElementById('btnCopyLabel');
+        const orig = lbl.innerText;
+        lbl.innerText = 'Copiado!';
+        setTimeout(() => { lbl.innerText = orig; }, 2000);
+      });
+    }
+
+    // 2. Feedback de Documentação (helpful, stale, wrong)
+    async function sendDocFeedback(signal) {
+      if (!currentProject || !currentDocPath) return;
+      let reason = '';
+      if (signal === 'stale' || signal === 'wrong') {
+        reason = prompt(`Por que este documento está ${signal === 'stale' ? 'desatualizado' : 'incorreto'}? (opcional):`) || '';
+      }
+
+      try {
+        const res = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace: currentWorkspace,
+            project: currentProject,
+            path: currentDocPath,
+            signal,
+            reason
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao registrar feedback');
+        alert(`Feedback "${signal}" registrado com sucesso no ai-memory!`);
+      } catch (err) {
+        alert('Erro ao enviar feedback: ' + err.message);
+      }
+    }
+
+    // 3. Auditoria Lint do Projeto
+    async function triggerLintAudit() {
+      if (!currentProject) return;
+      if (!confirm(`Deseja rodar a auditoria de consistência (lint) no projeto ${currentProject}?`)) return;
+
+      try {
+        const res = await fetch('/api/lint', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace: currentWorkspace, project: currentProject, no_llm: false })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao rodar lint');
+
+        await loadProjectPages();
+        // O lint só grava _lint/report.md quando acha algo; sem achado a página não existe.
+        if (currentPagesList.some(p => p.path === '_lint/report.md')) {
+          loadDoc('_lint/report.md');
+        } else {
+          alert('Auditoria concluída: nenhum achado, nada gravado em _lint/report.md');
+        }
+      } catch (err) {
+        alert('Erro ao rodar auditoria: ' + err.message);
+      }
+    }
+
+    // 4. Consolidação LLM de Sessão
+    async function consolidateSessionLLM(sessionId) {
+      if (!confirm(`Deseja consolidar a sessão ${sessionId} via LLM? O ai-memory compilará os prompts em um documento sessions/${sessionId}.md.`)) return;
+
+      try {
+        const res = await fetch('/api/consolidate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, multi_page: false })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao consolidar');
+
+        alert('Sessão consolidada com sucesso via LLM!');
+        await loadProjectPages();
+        await loadProjectHistory();
+        switchSidebarTab('history');
+      } catch (err) {
+        alert('Erro ao consolidar sessão: ' + err.message);
+      }
+    }
+
+    // 5. Gestão de Handoffs
+    const HANDOFF_STATES = {
+      open:     { label: 'Pendente', badge: 'bg-amber-900/60 text-amber-200 border-amber-700/50', card: 'bg-amber-950/20 border-amber-800/50', icon: '📥' },
+      accepted: { label: 'Consumido', badge: 'bg-slate-800 text-slate-300 border-slate-700', card: 'bg-slate-900/40 border-slate-800', icon: '✔️' },
+      expired:  { label: 'Expirado', badge: 'bg-rose-950/60 text-rose-300 border-rose-900/60', card: 'bg-slate-900/40 border-slate-800', icon: '⌛' }
+    };
+
+    function renderHandoffCard(h) {
+      const st = HANDOFF_STATES[h.state] || { label: h.state, badge: 'bg-slate-800 text-slate-300 border-slate-700', card: 'bg-slate-900/40 border-slate-800', icon: '•' };
+      const when = h.at ? new Date(h.at).toLocaleString('pt-BR') : '';
+      const list = (title, items) => (items && items.length)
+        ? `<div class="mt-2"><div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${title}</div><ul class="list-disc list-inside text-slate-400 space-y-0.5">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>`
+        : '';
+
+      const body = h.redacted
+        ? '<div class="text-slate-500 italic">Conteúdo retido pelo servidor: autentique-se para ler este handoff.</div>'
+        : `<div class="markdown-body text-[11px] leading-relaxed">${marked.parse(h.summary || '_Sem resumo._')}</div>
+           ${list('Perguntas em aberto', h.open_questions)}
+           ${list('Próximos passos', h.next_steps)}
+           ${list('Arquivos tocados', h.files_touched)}`;
+
+      const discard = h.state === 'open'
+        ? `<button onclick="cancelHandoff('${h.id}')" class="mt-3 w-full py-2 px-3 rounded-lg bg-rose-950/60 hover:bg-rose-900/80 border border-rose-900/60 text-rose-200 text-xs font-medium transition">Descartar / Expirar Este Handoff</button>`
+        : '';
+
+      return `
+        <div class="p-3.5 rounded-xl border text-xs flex flex-col gap-2 ${st.card}">
+          <div class="flex items-center justify-between border-b border-slate-800/60 pb-2">
+            <span class="font-bold text-slate-200 flex items-center gap-1.5">
+              <span>${st.icon}</span><span>${escapeHtml(h.agent || 'agente')}</span>
+            </span>
+            <span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider border ${st.badge}">${st.label}</span>
+          </div>
+          <div class="text-[10px] text-slate-500">${when}${h.cwd ? ' · ' + escapeHtml(h.cwd) : ''}</div>
+          <div class="max-h-80 overflow-y-auto bg-slate-950/60 p-3 rounded-lg border border-slate-900 text-slate-300">${body}</div>
+          ${discard}
+        </div>`;
+    }
+
+    async function renderHandoffsList() {
+      const container = document.getElementById('handoffsListContainer');
+      container.innerHTML = '<div class="text-xs text-slate-500 p-3 text-center">Carregando handoffs...</div>';
+
+      try {
+        const res = await fetch(`/api/handoffs?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject)}`);
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao carregar handoffs');
+
+        document.getElementById('handoffsBadgeCount').innerText = data.pending_count || 0;
+
+        const handoffs = data.handoffs || [];
+        if (handoffs.length === 0) {
+          container.innerHTML = '<div class="text-xs text-slate-500 p-4 text-center">Nenhum handoff neste projeto. O próximo agente iniciará com contexto limpo.</div>';
+          return;
+        }
+
+        container.innerHTML = `<div class="flex flex-col gap-3">${handoffs.map(renderHandoffCard).join('')}</div>`;
+      } catch (err) {
+        container.innerHTML = `<div class="text-xs text-rose-400 p-3">Erro ao carregar handoffs: ${err.message}</div>`;
+      }
+    }
+
+    async function cancelHandoff(handoffId) {
+      if (!confirm('Deseja descartar este handoff? O próximo agente não receberá este contexto.')) return;
+
+      try {
+        const res = await fetch('/api/handoff/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace: currentWorkspace, project: currentProject, handoff_id: handoffId })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao descartar handoff');
+        alert('Handoff descartado com sucesso!');
+        await loadProjectHistory();
+        renderHandoffsList();
+      } catch (err) {
+        alert('Erro ao descartar handoff: ' + err.message);
+      }
+    }
+
+    // 6. Upload de arquivos por Drag and Drop
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.currentTarget.classList.add('drop-active');
+    }
+
+    function handleDragLeave(e) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drop-active');
+    }
+
+    async function handleDropFile(e) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drop-active');
+
+      if (!currentProject) {
+        alert('Selecione um projeto antes de enviar arquivos.');
+        return;
+      }
+
+      const files = e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+
+      for (const file of files) {
+        if (!file.name.endsWith('.md')) {
+          alert(`O arquivo ${file.name} não é um markdown (.md). Ignorado.`);
+          continue;
+        }
+
+        const text = await file.text();
+        let targetPath = prompt(`Caminho no wiki para "${file.name}":`, `notes/${file.name}`);
+        if (!targetPath) continue;
+
+        try {
+          const res = await fetch('/api/page', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              workspace: currentWorkspace,
+              project: currentProject,
+              path: targetPath,
+              body: text,
+              tier: 'semantic',
+              pinned: false
+            })
+          });
+          const data = await res.json();
+          if (!res.ok || data.error) throw new Error(data.error || 'Erro ao enviar');
+          alert(`Arquivo ${file.name} salvo com sucesso em ${targetPath}!`);
+        } catch (err) {
+          alert(`Erro ao salvar ${file.name}: ` + err.message);
+        }
+      }
+
+      await loadProjectPages();
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.innerText = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
