@@ -1,0 +1,7 @@
+workspace = "default"
+project = "ai-memory-dash"
+project_strategy = "repo-root"
+
+[briefing]
+enabled = true
+max_chars = 4000
