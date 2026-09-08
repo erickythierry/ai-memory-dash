@@ -219,6 +219,19 @@ try {
     'abrir o grafo precisa esconder docHeader: o botao Deletar agiria na doc anterior');
   console.log('✅ Toda troca de tela fecha o grafo, descarta os dados e esconde a barra da doc');
 
+  // 9c. Titulo do handoff: a lista mostrava so o nome do agente, igual em todos.
+  // Extrai a funcao do bundle e testa a derivacao a partir do summary.
+  const bundle = fs.readFileSync(path.join(ROOT, 'public/static/app.js'), 'utf8');
+  const fnSrc = bundle.match(/function handoffTitle\(h\)[\s\S]*?\n\}/)?.[0];
+  assert(fnSrc, 'handoffTitle sumiu do bundle');
+  const handoffTitle = new Function(`${fnSrc}; return handoffTitle;`)() as (h: Json) => string;
+  assert.strictEqual(handoffTitle({ title: 'Explicito' }), 'Explicito');
+  assert.strictEqual(handoffTitle({ summary: 'Started: reorganizar projetos\n\nLast: x' }), 'reorganizar projetos');
+  assert.strictEqual(handoffTitle({ summary: '' }), '');
+  assert.strictEqual(handoffTitle({ summary: 'a'.repeat(120) }).length, 91, 'titulo longo deve truncar com reticencia');
+  assert(bundle.includes('function setHandoffFilter('), 'filtro de estado dos handoffs sumiu do bundle');
+  console.log('✅ Handoffs: titulo derivado do summary e filtro por estado presentes');
+
   // 10. Sem CORS wildcard: rotas de escrita nao podem ser dirigidas por site externo
   const resCors = await get('/api/projects');
   assert.strictEqual(resCors.headers.get('access-control-allow-origin'), null,

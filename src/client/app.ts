@@ -17,6 +17,12 @@ const $input = (id: string): HTMLInputElement => document.getElementById(id) as 
 const $sel = (id: string): HTMLSelectElement => document.getElementById(id) as HTMLSelectElement;
 const $area = (id: string): HTMLTextAreaElement => document.getElementById(id) as HTMLTextAreaElement;
 
+// A barra de feedback vive dentro do #docViewer, que e reescrito a cada render
+// (atividade recente, doc aberta). Guardar o no aqui e reanexa-lo depois evita
+// que ela suma - antes bastava passar pela tela de atividade recente para perder
+// os botoes de feedback ate o proximo reload.
+const feedbackNode = document.getElementById('docFeedbackSection')!;
+
 // Erro em catch e `unknown`; nas telas so a mensagem interessa.
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -434,11 +440,29 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         if (feedbackSec) feedbackSec.classList.remove('hidden');
 
         if (currentDocData && currentDocData.body) {
-          let bodyEl = $('docMarkdownBody');
-          if (!bodyEl) {
-            docViewer.innerHTML = '<div id="docMarkdownBody" class="markdown-body text-slate-300"></div>';
-            bodyEl = $('docMarkdownBody');
-          }
+          // O titulo do frontmatter e o que a lista e os cards mostram; sem ele
+          // aqui, a doc aberta nao tem ligacao visual com o item clicado.
+          const docTitle = currentDocData.title || currentDocData.frontmatter?.title || currentDocData.path;
+          const docKind = currentDocData.kind || currentDocData.frontmatter?.kind;
+          // Doc que ja abre com `# Titulo` igual ao do frontmatter nao precisa do
+          // cabecalho: sao as sessions (comecam em `##`) que ficavam sem titulo.
+          const firstHeading = (currentDocData.body.match(/^\s*#\s+(.+)$/m) || [])[1];
+          const duplicated = !!firstHeading && firstHeading.trim().toLowerCase() === String(docTitle).trim().toLowerCase();
+          const kindBadge = docKind
+            ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium" style="background: ${kindColor(docKind)}20; color: ${kindColor(docKind)}; border: 1px solid ${kindColor(docKind)}40">${escapeHtml(docKind)}</span>`
+            : '';
+          docViewer.innerHTML = `
+            ${duplicated ? '' : `<div class="mb-5 pb-3 border-b border-slate-800">
+              <h1 class="text-xl font-bold text-slate-100">${escapeHtml(docTitle)}</h1>
+              <div class="flex items-center gap-2 mt-1.5">
+                ${kindBadge}
+                <span class="text-xs font-mono text-slate-500 truncate">${escapeHtml(currentDocData.path || '')}</span>
+              </div>
+            </div>`}
+            <div id="docMarkdownBody" class="markdown-body text-slate-300"></div>
+          `;
+          docViewer.appendChild(feedbackNode);
+          const bodyEl = $('docMarkdownBody');
           bodyEl.innerHTML = marked.parse(currentDocData.body);
 
           // Syntax Highlighting com highlight.js
@@ -1287,9 +1311,21 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       expired:  { label: 'Expirado', badge: 'bg-rose-950/60 text-rose-300 border-rose-900/60', card: 'bg-slate-900/40 border-slate-800', icon: '⌛' }
     };
 
+    // Handoff nao tem campo de titulo no upstream: o `title` fica para quando
+    // tiver, e ate la a primeira linha do summary (sem o prefixo "Started:")
+    // identifica o item melhor que so o nome do agente repetido em toda a lista.
+    function handoffTitle(h: Json): string {
+      if (h.title) return String(h.title);
+      const first = String(h.summary || '').split('\n').map(l => l.trim()).find(Boolean);
+      if (!first) return '';
+      const clean = first.replace(/^(Started|Last)\s*:\s*/i, '').replace(/^[#*\s]+/, '');
+      return clean.length > 90 ? clean.slice(0, 90).trimEnd() + '…' : clean;
+    }
+
     function renderHandoffCard(h: Json) {
       const st = HANDOFF_STATES[h.state] || { label: h.state, badge: 'bg-slate-800 text-slate-300 border-slate-700', card: 'bg-slate-900/40 border-slate-800', icon: '•' };
       const when = h.at ? new Date(h.at).toLocaleString('pt-BR') : '';
+      const title = handoffTitle(h);
       const list = (title: string, items: string[] | undefined) => (items && items.length)
         ? `<div class="mt-2"><div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${title}</div><ul class="list-disc list-inside text-slate-400 space-y-0.5">${items!.map((i: string) => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>`
         : '';
@@ -1307,16 +1343,61 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
       return `
         <div class="p-3.5 rounded-xl border text-xs flex flex-col gap-2 ${st.card}">
-          <div class="flex items-center justify-between border-b border-slate-800/60 pb-2">
-            <span class="font-bold text-slate-200 flex items-center gap-1.5">
-              <span>${st.icon}</span><span>${escapeHtml(h.agent || 'agente')}</span>
-            </span>
-            <span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider border ${st.badge}">${st.label}</span>
+          <div class="border-b border-slate-800/60 pb-2">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-bold text-slate-200 flex items-center gap-1.5 min-w-0">
+                <span>${st.icon}</span><span class="truncate">${escapeHtml(h.agent || 'agente')}</span>
+              </span>
+              <span class="shrink-0 px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider border ${st.badge}">${st.label}</span>
+            </div>
+            ${title ? `<div class="mt-1 text-slate-300 font-medium leading-snug">${escapeHtml(title)}</div>` : ''}
           </div>
           <div class="text-[10px] text-slate-500">${when}${h.cwd ? ' · ' + escapeHtml(h.cwd) : ''}</div>
           <div class="max-h-80 overflow-y-auto bg-slate-950/60 p-3 rounded-lg border border-slate-900 text-slate-300">${body}</div>
           ${discard}
         </div>`;
+    }
+
+    // Lista carregada e filtro atual: trocar de filtro nao refaz a requisicao.
+    let handoffsCache: Json[] = [];
+    let handoffFilter = 'all';
+
+    function setHandoffFilter(state: string) {
+      handoffFilter = state;
+      drawHandoffsList();
+    }
+
+    function drawHandoffsList() {
+      const container = $('handoffsListContainer');
+
+      // Pendente primeiro — e o unico acionavel; dentro de cada grupo, mais recente antes.
+      const sorted = [...handoffsCache].sort((a, b) => {
+        const rank = (h: Json) => (h.state === 'open' ? 0 : 1);
+        return rank(a) - rank(b) || new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime();
+      });
+
+      const counts: Record<string, number> = { all: sorted.length };
+      for (const h of sorted) counts[h.state] = (counts[h.state] || 0) + 1;
+
+      const chips = [
+        { key: 'all', label: 'Todos' },
+        { key: 'open', label: HANDOFF_STATES.open!.label },
+        { key: 'accepted', label: HANDOFF_STATES.accepted!.label },
+        { key: 'expired', label: HANDOFF_STATES.expired!.label }
+      ].filter(c => c.key === 'all' || counts[c.key])
+       .map(c => {
+        const on = handoffFilter === c.key;
+        return `<button onclick="setHandoffFilter('${c.key}')" class="px-2 py-0.5 rounded-full border text-[10px] font-medium transition ${
+          on ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+        }">${c.label} <span class="opacity-70">${counts[c.key] || 0}</span></button>`;
+      }).join('');
+
+      const visible = handoffFilter === 'all' ? sorted : sorted.filter(h => h.state === handoffFilter);
+      const cards = visible.length
+        ? `<div class="flex flex-col gap-3">${visible.map(renderHandoffCard).join('')}</div>`
+        : '<div class="text-xs text-slate-500 p-4 text-center">Nenhum handoff neste filtro.</div>';
+
+      container.innerHTML = `<div class="flex flex-wrap items-center gap-1.5 mb-3">${chips}</div>${cards}`;
     }
 
     async function renderHandoffsList() {
@@ -1330,13 +1411,13 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
         $('handoffsBadgeCount').innerText = data.pending_count || 0;
 
-        const handoffs = data.handoffs || [];
-        if (handoffs.length === 0) {
+        handoffsCache = data.handoffs || [];
+        if (handoffsCache.length === 0) {
           container.innerHTML = '<div class="text-xs text-slate-500 p-4 text-center">Nenhum handoff neste projeto. O próximo agente iniciará com contexto limpo.</div>';
           return;
         }
 
-        container.innerHTML = `<div class="flex flex-col gap-3">${handoffs.map(renderHandoffCard).join('')}</div>`;
+        drawHandoffsList();
       } catch (err) {
         container.innerHTML = `<div class="text-xs text-rose-400 p-3">Erro ao carregar handoffs: ${errMsg(err)}</div>`;
       }
