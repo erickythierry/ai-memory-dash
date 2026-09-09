@@ -27,6 +27,39 @@ ai-memory pela API pública dela. O projeto original fica intacto.
 | **Grafo** | Mapa de links do projeto, com zoom, pan e navegação por clique |
 | **Handoffs** | Histórico completo por estado (pendente / consumido / expirado), com descarte explícito |
 
+## Telas
+
+Lista de projetos: workspaces com contagem, métricas de saúde por card, e as ações de
+baixar em `.zip` ou apagar o projeto no rodapé de cada um.
+
+![Lista de projetos](docs/screenshots/home.jpeg)
+
+Projeto aberto — páginas agrupadas por pasta à esquerda, atividade recente à direita.
+Cada item da lista tem baixar e apagar no hover.
+
+![Projeto aberto](docs/screenshots/projeto-docs.jpeg)
+
+Editor com realce de markdown e de `[[wikilink]]`, preview lado a lado alternável e
+rolagem casada entre os dois painéis.
+
+![Editor markdown com preview](docs/screenshots/editor.jpeg)
+
+Grafo de `[[wikilinks]]` do projeto, com zoom, pan, cores por tipo de página e
+tracejado para alvo em outro projeto.
+
+![Grafo de links](docs/screenshots/grafo.jpeg)
+
+| Sessões, com a contagem de observações | Handoffs, por estado, sem consumir |
+|---|---|
+| <img src="docs/screenshots/sessoes.jpeg" alt="Aba de sessões"> | <img src="docs/screenshots/handoffs.jpeg" alt="Aba de handoffs"> |
+
+| Projeto novo | Página nova |
+|---|---|
+| <img src="docs/screenshots/novo-projeto.jpeg" alt="Modal de novo projeto"> | <img src="docs/screenshots/nova-pagina.jpeg" alt="Modal de nova página"> |
+
+> Os dados sensíveis dos prints estão borrados de propósito: são páginas reais de uma
+> instância em uso.
+
 ## Requisitos
 
 - Node.js 18+ (usa `fetch` nativo e `node:` imports).

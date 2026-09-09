@@ -450,7 +450,7 @@ const server = http.createServer(async (req, res) => {
 
       const nodes = new Map<string, Json>();
       // O upstream so resolve wikilink escrito com o path inteiro. Quem escreve
-      // `[[sendflow-mapa-repos]]` (estilo Obsidian) fica com `links: []` e a
+      // `[[mapa-repos]]` (estilo Obsidian) fica com `links: []` e a
       // pagina aparece orfa no grafo. Indice basename -> path fecha a lacuna.
       // ponytail: primeiro path vence quando dois arquivos tem o mesmo nome.
       const pathSet = new Set<string>(paths.map((p: Json) => p.path));

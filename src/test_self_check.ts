@@ -308,7 +308,7 @@ try {
   const slugProject = new Function(`${slugSrc}; return slugProject;`)() as (n: string) => string;
   assert.strictEqual(slugProject('Cliente Acme'), 'cliente-acme');
   assert.strictEqual(slugProject('Projeto Ção/Teste'), 'projeto-cao-teste');
-  assert.strictEqual(slugProject('  --sendflow--  '), 'sendflow', 'nao pode sobrar tracos nas pontas');
+  assert.strictEqual(slugProject('  --meu-projeto--  '), 'meu-projeto', 'nao pode sobrar tracos nas pontas');
   assert.strictEqual(slugProject(''), '');
   console.log('✅ Home: criar projeto semeia a primeira pagina e o slug vira o diretorio');
 
@@ -351,9 +351,9 @@ try {
 
   const states: Json[] = [
     { currentWorkspace: 'default', currentProject: null, currentDocPath: null, currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'view' },
-    { currentWorkspace: 'default', currentProject: 'sendflow', currentDocPath: null, currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'view' },
-    { currentWorkspace: 'default', currentProject: 'sendflow', currentDocPath: null, currentSessionId: null, currentActiveTab: 'handoffs', currentDocMode: 'view' },
-    { currentWorkspace: 'default', currentProject: 'sendflow', currentDocPath: 'notes/a b/ç.md', currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'edit' },
+    { currentWorkspace: 'default', currentProject: 'meu-projeto', currentDocPath: null, currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'view' },
+    { currentWorkspace: 'default', currentProject: 'meu-projeto', currentDocPath: null, currentSessionId: null, currentActiveTab: 'handoffs', currentDocMode: 'view' },
+    { currentWorkspace: 'default', currentProject: 'meu-projeto', currentDocPath: 'notes/a b/ç.md', currentSessionId: null, currentActiveTab: 'docs', currentDocMode: 'edit' },
     { currentWorkspace: 'default', currentProject: 'x', currentDocPath: null, currentSessionId: 'abc-123', currentActiveTab: 'docs', currentDocMode: 'view' }
   ];
   for (const st of states) {
@@ -370,7 +370,7 @@ try {
   assert.strictEqual(parseRoute('/rota/invalida', '').view, 'projects', 'rota desconhecida deve cair na home');
 
   // Fallback do servidor: sem ele, recarregar numa doc daria 404.
-  for (const route of ['/p/default/sendflow', '/p/default/sendflow/doc/notes/foo.md', '/search?q=x']) {
+  for (const route of ['/p/default/meu-projeto', '/p/default/meu-projeto/doc/notes/foo.md', '/search?q=x']) {
     const r = await fetch(BASE + route);
     assert.strictEqual(r.status, 200, `rota ${route} deveria devolver o index`);
     assert((r.headers.get('content-type') || '').includes('text/html'), `rota ${route} deveria ser HTML`);
