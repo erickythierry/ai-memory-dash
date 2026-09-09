@@ -1,8 +1,9 @@
 # ai-memory-dash
 
 Dashboard sidecar para o [**ai-memory**](https://github.com/akitaonrails/ai-memory) que adiciona o que
-falta na dash oficial: **editar**, **deletar** e **baixar** documentos — um markdown
-avulso ou o projeto inteiro em `.zip`.
+falta na dash oficial: **editar** num editor markdown de verdade, **criar** e **apagar**
+projetos e workspaces, **baixar** documentos — um markdown avulso ou o projeto inteiro
+em `.zip` — e guardar **backups** do servidor.
 
 Não é um fork nem um patch. É um processo separado que fala com a sua instância do
 ai-memory pela API pública dela. O projeto original fica intacto.
@@ -15,11 +16,12 @@ ai-memory pela API pública dela. O projeto original fica intacto.
 | | |
 |---|---|
 | **Navegar** | Cards de projeto com sessões, observações, handoffs pendentes e saúde; páginas agrupadas por pasta; busca full-text |
-
 | **Ler** | Markdown renderizado, com realce de sintaxe e diagramas mermaid |
-| **Editar** | Edição do corpo da página, gravando via `memory_write_page` |
-| **Deletar** | Remoção de página, via `memory_delete_page` |
+| **Editar** | Editor markdown (CodeMirror) com realce de sintaxe e de `[[wikilink]]`, autocomplete de link ao digitar `[[`, preview lado a lado alternável e `Ctrl+S` |
+| **Criar** | Página nova, e projeto novo — o ai-memory cria o projeto ao receber a primeira página, então a dash semeia `notes/index.md` |
+| **Deletar** | Página, projeto inteiro ou workspace inteiro |
 | **Baixar** | Um `.md` avulso ou o projeto inteiro em `.zip`, com a estrutura de pastas |
+| **Backups** | Snapshot do servidor (wiki + SQLite) baixado e guardado em disco, com histórico, download e remoção |
 | **Histórico** | Toda sessão do projeto com sua contagem de observações; clicar abre a timeline completa |
 | **Manutenção** | Sinais de feedback (`helpful`/`stale`/`wrong`), lint do projeto, consolidação LLM de sessão |
 | **Grafo** | Mapa de links do projeto, com zoom, pan e navegação por clique |
@@ -59,6 +61,12 @@ do container — a porta é publicada só em `127.0.0.1:3838`, então continua f
 `restart: unless-stopped` faz o container subir junto com o daemon do Docker, ou seja,
 junto com o sistema. Para desligar de vez: `docker compose down`.
 
+O compose monta `./backups` no container (os snapshots ficam no host, não na imagem),
+além de `./dist` e `./public` em modo leitura — assim `npm run build` no host recarrega
+o frontend sem rebuild da imagem. Mudança em `src/server.ts` precisa de restart do
+container, porque o processo Node já carregou o `dist/server.js`. Volume novo pede
+`docker compose up -d`, não `docker restart`.
+
 Se o seu ai-memory rodar em `localhost` da própria máquina, `AI_MEMORY_URL` precisa
 apontar para `http://host.docker.internal:PORTA` (ou use `network_mode: host`).
 
@@ -70,6 +78,7 @@ apontar para `http://host.docker.internal:PORTA` (ou use `network_mode: host`).
 | `AI_MEMORY_AUTH_TOKEN` | *(obrigatória)* | Token bearer da sua instância. |
 | `PORT` | `3838` | Porta local. |
 | `HOST` | `127.0.0.1` | Interface de bind. Leia a seção de segurança antes de mudar. |
+| `BACKUP_DIR` | `./backups` | Onde os snapshots baixados do servidor ficam guardados. No Docker é um volume; sem ele o histórico morre com o container. |
 
 O `.env` é lido por um parser de 10 linhas no próprio `src/server.ts` — variáveis de
 ambiente já definidas têm precedência sobre o arquivo. Sem `dotenv`.
@@ -93,6 +102,12 @@ páginas. As decisões daí:
   (`[^\w.\-]` → `_`) para que um path de página não injete cabeçalho.
 - **Mensagens de erro do upstream chegam ao cliente** em `{"error": ...}`. Aceitável
   numa dash local; não exponha a porta publicamente contando com o contrário.
+- **As rotas de apagar projeto e workspace são as mais perigosas da dash** — chamam
+  `/admin` no upstream, que não tem dry-run. A UI exige digitar o nome, e o servidor
+  recusa apagar o workspace `default`, que é o de todo `.ai-memory.toml` da máquina.
+- **Nome de backup restrito ao padrão gerado aqui** (`backup-<ISO>.tar.gz`). O nome
+  vem da query string, e sem esse filtro um `../` leria ou apagaria qualquer arquivo
+  do container.
 
 ## API
 
@@ -116,6 +131,13 @@ Todas as rotas devolvem JSON, exceto os downloads.
 | `/api/consolidate` | POST | Consolidação LLM de uma sessão |
 | `/api/handoffs?workspace=&project=` | GET | Lista handoffs (todos os estados), leitura não-destrutiva |
 | `/api/handoff/cancel` | POST | Consome ou cancela um handoff |
+| `/api/workspaces` | GET | Workspaces com contagem de projetos e páginas |
+| `/api/project?workspace=&project=` | DELETE | Apaga o projeto inteiro (`/admin/purge-project`) |
+| `/api/workspace?workspace=` | DELETE | Apaga o workspace e tudo dentro (`/admin/delete-workspace`); recusa `default` |
+| `/api/backups` | GET | Snapshots já guardados no disco da dash |
+| `/api/backup` | POST | Pede um snapshot novo ao upstream e salva |
+| `/api/backup/file?name=` | GET | Baixa um snapshot guardado |
+| `/api/backup?name=` | DELETE | Apaga um snapshot guardado |
 
 ## Como funciona
 
@@ -124,7 +146,10 @@ Dois caminhos até o upstream:
 - **JSON-RPC em `/mcp`** para tudo que é ferramenta do ai-memory — `memory_recent`,
   `memory_read_page`, `memory_write_page`, `memory_delete_page`, `memory_lint`,
   `memory_consolidate`, handoffs.
-- **`GET /api/v1/*`** para `projects`, `search`, `overview` e a listagem de handoffs.
+- **`GET /api/v1/*`** para `projects`, `search`, `overview`, `workspaces` e a listagem
+  de handoffs.
+- **`POST /admin/*`** para o que não existe como ferramenta MCP: apagar projeto,
+  apagar workspace e gerar backup.
 
 `/api/projects` compõe as duas coisas: pega a lista do upstream e busca o `/overview` de
 cada projeto em paralelo para preencher os números do card. Um projeto cujo overview
@@ -144,6 +169,47 @@ inteiramente órfão.
 O layout é uma simulação de forças de ~50 linhas em SVG, sem biblioteca: repulsão
 O(n²), mola nas arestas, gravidade fraca ao centro e `alpha` decaindo até parar.
 Com dezenas de nós isso é irrelevante; acima de uns 500 vale trocar por d3-force.
+
+### Não existe "criar projeto", e o workspace sobra
+
+O ai-memory não tem endpoint de criar projeto: **o projeto passa a existir quando a
+primeira página é escrita nele** — `memory_write_page` cria o `project` (e o
+`workspace`) que ainda não existir. Por isso o modal de projeto novo semeia
+`notes/index.md`, e o nome digitado vira slug (minúsculo, sem acento) porque é ele que
+vira diretório no wiki.
+
+Do outro lado, apagar tem duas rotas com contratos diferentes, ambas em `/admin`:
+
+| Rota | Contrato |
+|---|---|
+| `POST /admin/purge-project` | Exige `workspace` + `project` + `confirm: true`. Sem `confirm` devolve 422 e não apaga nada — **não é dry-run**, é recusa. Deixa o workspace vazio para trás. |
+| `POST /admin/delete-workspace` | Só `{"workspace": "..."}`. **Não pede `confirm`**: apaga na primeira chamada, com todos os projetos dentro. |
+
+Não existe `/admin/purge-workspace` (404) — o nome é `delete-`. E não há dry-run em
+nenhuma das duas, o que é a razão de a UI exigir digitar o nome antes.
+
+### O upstream não guarda backup nenhum
+
+`POST /admin/backup` **devolve o `.tar.gz` no corpo da resposta** (wiki + snapshot do
+SQLite) e esquece o assunto: não há rota de listar (`/admin/backups` → 404) nem de
+restaurar (`/admin/restore` → 404). Logo, "histórico de backups" não é algo que se
+consulte no servidor — é o que a dash arquivou em `BACKUP_DIR`. Backup gerado por fora
+(um `curl`, um cron no servidor) não aparece na tela.
+
+Restaurar continua sendo trabalho manual: extrair o tar sobre o `data_dir` do
+ai-memory, com o serviço parado.
+
+### O editor é CodeMirror 5, carregado por CDN
+
+O frontend é um script clássico, sem bundler — por isso CodeMirror **5** (UMD, um
+`<script src>`) e não o 6, que é ESM e exigiria empacotamento. O realce de
+`[[wikilink]]` é um `overlayMode` de ~5 linhas sobre o modo `gfm`: wikilink é sintaxe
+do ai-memory, não do markdown, então não vem de fábrica em modo nenhum.
+
+O preview lado a lado reusa exatamente o mesmo `renderMarkdownInto()` do modo leitura
+(marked + highlight.js + mermaid), senão os dois divergiriam na primeira mudança. A
+rolagem casada é proporcional, não linha a linha: mapear linha do fonte para o nó
+renderizado exigiria source maps do marked.
 
 ### Duas armadilhas na listagem de sessões
 
@@ -199,6 +265,10 @@ Roda de ponta a ponta contra a sua instância: descobre projetos e páginas em r
 então funciona em qualquer servidor. Sobe o `dist/server.js` sozinho se ele não estiver de pé.
 Não escreve nada além de um sinal de feedback `helpful` numa página existente.
 
+Das rotas destrutivas ele exercita só as recusas — escopo faltando, workspace `default`,
+nome de backup fora do padrão — porque apagar de verdade não teria como ser desfeito, e
+gerar um backup a cada execução custaria alguns MB por rodada.
+
 ## Estrutura
 
 ```
@@ -206,11 +276,13 @@ src/server.ts          # servidor HTTP, proxy MCP e rotas da API
 src/client/app.ts      # frontend (compila para public/static/app.js)
 src/test_self_check.ts # self-check de ponta a ponta
 public/index.html      # markup da SPA, carrega /static/app.js
+backups/               # snapshots baixados do servidor (fora do git)
 tsconfig.json          # build do servidor  -> dist/
 tsconfig.client.json   # build do frontend  -> public/static/app.js
 ```
 
-Dependência única: `archiver`. O resto é stdlib do Node.
+Dependência única: `archiver`. O resto é stdlib do Node — o frontend puxa Tailwind,
+marked, highlight.js, mermaid e CodeMirror por CDN, sem passo de bundling.
 
 ## Licença
 
