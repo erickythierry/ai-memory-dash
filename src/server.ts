@@ -46,6 +46,10 @@ const HOST = process.env.HOST || '127.0.0.1';
 // ponytail: teto simples em vez de paginacao - o servidor aceita 500 sem cap
 // e o maior projeto tem 77 paginas. Paginar quando algum passar disso.
 const PAGE_LIMIT = 500;
+// O upstream nao guarda backup nenhum: POST /admin/backup devolve o tar.gz no
+// corpo e pronto. Quem quiser historico tem que salvar de fora — e este dir.
+const BACKUP_DIR = process.env.BACKUP_DIR || path.join(ROOT, 'backups');
+const BACKUP_NAME = /^backup-[0-9T-]+\.tar\.gz$/;
 
 let mcpReqId = 0;
 
@@ -102,6 +106,36 @@ async function fetchApiV1(subpath: string): Promise<Json> {
     throw new Error(`Upstream API v1 error ${res.status}`);
   }
   return res.json() as Promise<Json>;
+}
+
+// Rotas /admin do ai-memory: fora da API v1, sempre POST com corpo JSON.
+// Sao as unicas que apagam projeto ou workspace inteiro — nao ha equivalente
+// nas ferramentas MCP, que so deletam pagina a pagina.
+async function adminPost(subpath: string, payload: Record<string, unknown>): Promise<Json> {
+  const res = await fetch(`${AI_MEMORY_URL}/admin${subpath}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${AI_MEMORY_AUTH_TOKEN}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'ai-memory-dash/1.0'
+    },
+    body: JSON.stringify(payload)
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    // O upstream responde texto puro em erro de payload e JSON no resto.
+    throw new Error(`Upstream admin${subpath} ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+
+// Listagem de paginas do projeto. Fonte unica: `memory_recent` cappa em 100
+// hits e escondia a pagina 101 em diante (lista lateral, zip e sessoes).
+async function listPages(workspace: string, project: string): Promise<Json[]> {
+  const listing: Json = await fetchApiV1(
+    `/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages?limit=${PAGE_LIMIT}`
+  );
+  return Array.isArray(listing) ? listing : listing?.pages || [];
 }
 
 // Mapa path -> ['orphan'|'stale'|'duplicate'], para marcar as paginas na lista.
@@ -218,6 +252,116 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 2b. GET /api/workspaces — o nivel acima do projeto, com a contagem.
+    if (pathname === '/api/workspaces' && req.method === 'GET') {
+      const workspaces: Json = await fetchApiV1('/workspaces');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(workspaces || []));
+      return;
+    }
+
+    // 2c. DELETE /api/project?workspace=...&project=...
+    // Apaga o projeto inteiro (paginas, sessoes, observacoes, handoffs). O
+    // upstream nao tem dry-run: sem `confirm` devolve 422 e nao apaga nada.
+    if (pathname === '/api/project' && req.method === 'DELETE') {
+      const workspace = parsedUrl.searchParams.get('workspace');
+      const project = parsedUrl.searchParams.get('project');
+      if (!workspace || !project) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'workspace and project are required' }));
+        return;
+      }
+      const result = await adminPost('/purge-project', { workspace, project, confirm: true });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
+    // 2d. DELETE /api/workspace?workspace=...
+    // Leva junto todo projeto que estiver dentro. `default` fica de fora: e o
+    // workspace de todo .ai-memory.toml da maquina, um clique nao pode zerar.
+    if (pathname === '/api/workspace' && req.method === 'DELETE') {
+      const workspace = parsedUrl.searchParams.get('workspace');
+      if (!workspace) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'workspace is required' }));
+        return;
+      }
+      if (workspace === 'default') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'o workspace default nao pode ser deletado pela dash' }));
+        return;
+      }
+      const result = await adminPost('/delete-workspace', { workspace });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result }));
+      return;
+    }
+
+    // 2e. GET /api/backups — o que ja foi baixado para o disco da dash.
+    if (pathname === '/api/backups' && req.method === 'GET') {
+      const files = fs.existsSync(BACKUP_DIR) ? fs.readdirSync(BACKUP_DIR) : [];
+      const list = files.filter(f => BACKUP_NAME.test(f)).map(name => {
+        const st = fs.statSync(path.join(BACKUP_DIR, name));
+        return { name, bytes: st.size, created: st.mtime.toISOString() };
+      }).sort((a, b) => b.created.localeCompare(a.created));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(list));
+      return;
+    }
+
+    // 2f. POST /api/backup — pede um tar.gz novo ao upstream e guarda aqui.
+    if (pathname === '/api/backup' && req.method === 'POST') {
+      const upstream = await fetch(`${AI_MEMORY_URL}/admin/backup`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${AI_MEMORY_AUTH_TOKEN}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'ai-memory-dash/1.0'
+        },
+        body: '{}'
+      });
+      if (!upstream.ok) {
+        throw new Error(`Upstream /admin/backup ${upstream.status}: ${(await upstream.text()).slice(0, 300)}`);
+      }
+      // ponytail: buffer inteiro em memoria - o arquivo hoje tem 9 MB. Trocar
+      // por stream se o wiki crescer a ponto de isso pesar.
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      const name = `backup-${new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')}.tar.gz`;
+      fs.writeFileSync(path.join(BACKUP_DIR, name), buf);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, name, bytes: buf.length, created: new Date().toISOString() }));
+      return;
+    }
+
+    // 2g. GET /api/backup/file?name=... e DELETE /api/backup?name=...
+    // `name` vem da URL: so o formato gerado aqui passa, senao `../` deixaria
+    // ler ou apagar qualquer arquivo do container.
+    if ((pathname === '/api/backup/file' && req.method === 'GET')
+      || (pathname === '/api/backup' && req.method === 'DELETE')) {
+      const name = parsedUrl.searchParams.get('name') || '';
+      const file = path.join(BACKUP_DIR, name);
+      if (!BACKUP_NAME.test(name) || !fs.existsSync(file)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'backup nao encontrado' }));
+        return;
+      }
+      if (req.method === 'DELETE') {
+        fs.unlinkSync(file);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/gzip',
+        'Content-Disposition': `attachment; filename="${name}"`,
+        'Content-Length': fs.statSync(file).size
+      });
+      fs.createReadStream(file).pipe(res);
+      return;
+    }
+
     // 3. GET /api/search?q=...&workspace=...&project=...&limit=...
     if (pathname === '/api/search' && req.method === 'GET') {
       const q = parsedUrl.searchParams.get('q') || '';
@@ -246,26 +390,21 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Busca as páginas recentes do projeto, e em paralelo o drill-down de saúde
+      // A listagem v1 e a fonte: `memory_recent` cappa em 100 hits, o que
+      // escondia a pagina 101 em diante. Em paralelo, o drill-down de saude
       // para marcar cada uma na lista. O `limit` do overview e o teto das listas
       // stale/duplicate/orphan: o default e 10, o que truncaria a marcacao.
-      const [data, health, v1Listing] = await Promise.all([
-        mcpCall('memory_recent', { workspace, project, limit: PAGE_LIMIT }),
-        healthByPath(workspace, project),
-        fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages?limit=${PAGE_LIMIT}`).catch(() => [])
+      const [pages, health] = await Promise.all([
+        listPages(workspace, project),
+        healthByPath(workspace, project)
       ]);
 
-      const v1Map = new Map<string, Json>((Array.isArray(v1Listing) ? v1Listing : []).map((p: Json) => [p.path, p]));
-      const hits = (data?.hits || []).map((h: Json) => {
-        const v1 = v1Map.get(h.path) || {};
-        return {
-          ...h,
-          kind: v1.kind || h.kind || 'note',
-          tier: v1.tier || h.tier || 'semantic',
-          updated_at: v1.updated_at || (h.rank ? new Date(h.rank / 1000).toISOString() : null),
-          health: health.get(h.path) || []
-        };
-      });
+      const hits = pages.map((p: Json) => ({
+        ...p,
+        kind: p.kind || 'note',
+        tier: p.tier || 'semantic',
+        health: health.get(p.path) || []
+      }));
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(hits));
       return;
@@ -302,18 +441,33 @@ const server = http.createServer(async (req, res) => {
       // Os links so existem na pagina inteira: nem a listagem nem o /graph do
       // upstream (que e so cross-project) os trazem. Entao busca cada pagina em
       // paralelo — 77 paginas levam ~300ms.
-      const listing: Json = await fetchApiV1(
-        `/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages`
-      );
-      const paths: Json[] = (Array.isArray(listing) ? listing : listing?.pages || []);
+      const paths: Json[] = await listPages(workspace, project);
 
       const pages: Json[] = await Promise.all(paths.map((p: Json) =>
         fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/pages/${p.path}`)
           .catch(() => null)
       ));
 
-      const health = await healthByPath(workspace, project);
       const nodes = new Map<string, Json>();
+      // O upstream so resolve wikilink escrito com o path inteiro. Quem escreve
+      // `[[sendflow-mapa-repos]]` (estilo Obsidian) fica com `links: []` e a
+      // pagina aparece orfa no grafo. Indice basename -> path fecha a lacuna.
+      // ponytail: primeiro path vence quando dois arquivos tem o mesmo nome.
+      const pathSet = new Set<string>(paths.map((p: Json) => p.path));
+      const byBasename = new Map<string, string>();
+      for (const p of paths) {
+        const base = String(p.path).replace(/\.md$/, '').split('/').pop()!;
+        if (!byBasename.has(base)) byBasename.set(base, p.path);
+      }
+      const bodyLinks = (page: Json): string[] => {
+        const out: string[] = [];
+        for (const m of String(page?.body_markdown || '').matchAll(/\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]/g)) {
+          const raw = m[1]!.trim().replace(/\.md$/, '');
+          const hit = pathSet.has(`${raw}.md`) ? `${raw}.md` : byBasename.get(raw.split('/').pop()!);
+          if (hit) out.push(hit);
+        }
+        return out;
+      };
       const key = (ws: string, pr: string, pa: string) => `${ws}/${pr}/${pa}`;
 
       for (const p of paths) {
@@ -324,19 +478,25 @@ const server = http.createServer(async (req, res) => {
           kind: p.kind || 'note',
           tier: p.tier,
           external: false,
-          orphan: (health.get(p.path) || []).includes('orphan'),
+          orphan: false, // recalculado pelo grau depois das arestas
           degree: 0
         });
       }
 
       const edges: { from: string; to: string }[] = [];
+      const seen = new Set<string>();
       for (const page of pages) {
-        if (!page?.links) continue;
+        if (!page?.path) continue;
         const from = key(page.workspace, page.project, page.path);
-        for (const l of page.links) {
+        const links: Json[] = [
+          ...(page.links || []),
+          ...bodyLinks(page).map((path) => ({ path }))
+        ];
+        for (const l of links) {
           if (!l.path) continue;
           const to = key(l.workspace || workspace, l.project || project, l.path);
-          if (from === to) continue;
+          if (from === to || seen.has(`${from}>${to}`)) continue;
+          seen.add(`${from}>${to}`);
           // Alvo em outro projeto vira no externo, para a aresta nao sumir.
           if (!nodes.has(to)) {
             nodes.set(to, {
@@ -357,6 +517,10 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Orfa aqui e grau zero: o `orphan` do health upstream nao enxerga o
+      // wikilink por basename e marcaria pagina conectada como orfa.
+      for (const n of nodes.values()) n.orphan = n.degree === 0;
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ nodes: [...nodes.values()], edges }));
       return;
@@ -376,17 +540,17 @@ const server = http.createServer(async (req, res) => {
       // observation_count, consolidada em pagina wiki ou nao. Antes isto filtrava
       // memory_recent por 'sessions/', entao sessao sem pagina — justamente onde
       // ficam as observacoes ainda nao consolidadas — sumia da tela.
-      const [listing, recent, briefing]: Json[] = await Promise.all([
+      const [listing, pages, briefing]: Json[] = await Promise.all([
         // include_open: sem isso o upstream esconde a sessao ainda em curso — a
         // que costuma ter as observacoes mais recentes. limit=100 e o teto dele.
         fetchApiV1(`/workspaces/${encodeURIComponent(workspace)}/projects/${encodeURIComponent(project)}/sessions?include_open=true&limit=100`),
-        mcpCall('memory_recent', { workspace, project, limit: PAGE_LIMIT }),
+        listPages(workspace, project),
         mcpCall('memory_briefing', { workspace, project })
       ]);
 
       // Casa cada sessao com a pagina consolidada correspondente, quando existe.
       const pageBySession = new Map<string, Json>();
-      for (const h of recent?.hits || []) {
+      for (const h of pages as Json[]) {
         if (h.path.startsWith('sessions/')) {
           pageBySession.set(h.path.replace(/^sessions\//, '').replace(/\.md$/, ''), h);
         }
@@ -621,8 +785,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const data = await mcpCall('memory_recent', { workspace, project, limit: PAGE_LIMIT });
-      const hits: Json[] = data?.hits || [];
+      const hits: Json[] = await listPages(workspace, project);
 
       res.writeHead(200, {
         'Content-Type': 'application/zip',

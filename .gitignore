@@ -5,3 +5,4 @@ dist
 *.log
 public/static/app.js
 public/static/app.js.map
+backups

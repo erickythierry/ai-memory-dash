@@ -6,6 +6,7 @@
 declare const marked: any;
 declare const hljs: any;
 declare const mermaid: any;
+declare const CodeMirror: any;
 
 // Respostas da API da dash: JSON dinamico do ai-memory, sem schema publicado.
 type Json = any;
@@ -151,10 +152,6 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       loadProjects();
       applyRoute();
       window.addEventListener('popstate', applyRoute);
-      const ta = $area('editorTextarea');
-      ta.addEventListener('input', onEditorInput);
-      ta.addEventListener('keydown', onEditorKeydown);
-      ta.addEventListener('blur', closeWikiPopup);
     });
 
     function switchSidebarTab(tab: string) {
@@ -192,10 +189,78 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         const res = await fetch('/api/projects');
         const projects = await res.json();
         renderProjects(projects);
+        loadWorkspaces(); // barra de cima, independente do grid
       } catch (err) {
         alert('Erro ao carregar projetos: ' + errMsg(err));
       }
     }
+
+    async function loadWorkspaces() {
+      const bar = $('workspacesBar');
+      try {
+        const list: Json[] = await (await fetch('/api/workspaces')).json();
+        bar.innerHTML = list.map((w: Json) => {
+          const plural = w.project_count === 1 ? 'projeto' : 'projetos';
+          // `default` nao ganha lixeira: e o workspace de todo .ai-memory.toml
+          // da maquina. O servidor tambem recusa, isto aqui e so a UI.
+          const del = w.workspace_name === 'default' ? '' : `
+            <button onclick="confirmDeleteWorkspace('${w.workspace_name}', ${w.project_count})"
+              title="Deletar o workspace ${w.workspace_name} e tudo dentro dele"
+              class="ml-1 -mr-1 p-0.5 rounded hover:bg-rose-900/40 hover:text-rose-400 transition">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>`;
+          return `<span class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1 rounded-lg border border-slate-800 bg-slate-900/60 text-[11px] text-slate-400">
+            <span class="font-mono text-slate-300">${escapeHtml(w.workspace_name)}</span>
+            <span class="text-slate-500">${w.project_count} ${plural} · ${w.page_count} págs</span>
+            ${del}
+          </span>`;
+        }).join('');
+      } catch (err) {
+        bar.innerHTML = `<span class="text-[11px] text-slate-600">Workspaces indisponíveis: ${escapeHtml(errMsg(err))}</span>`;
+      }
+    }
+
+    // Apagar projeto e workspace nao tem volta e o upstream nao tem dry-run:
+    // por isso exige digitar o nome, nao um confirm() de um clique so.
+    function confirmByTyping(name: string, aviso: string): boolean {
+      const typed = prompt(`${aviso}\n\nDigite "${name}" para confirmar:`);
+      if (typed === null) return false;
+      if (typed.trim() !== name) {
+        alert('O nome não confere — nada foi apagado.');
+        return false;
+      }
+      return true;
+    }
+
+    async function confirmDeleteProject(workspace: string, project: string, pages: number) {
+      if (!confirmByTyping(project,
+        `Apagar o projeto ${workspace}/${project}?\n\nLeva junto ${pages} página(s), sessões, observações e handoffs.`)) return;
+      try {
+        const res = await fetch(`/api/project?workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao deletar projeto');
+        if (currentProject === project && currentWorkspace === workspace) goToProjects();
+        await loadProjects();
+      } catch (err) {
+        alert('Erro ao deletar projeto: ' + errMsg(err));
+      }
+    }
+
+    async function confirmDeleteWorkspace(workspace: string, projectCount: number) {
+      if (!confirmByTyping(workspace,
+        `Apagar o workspace ${workspace}?\n\nLeva junto ${projectCount} projeto(s) e tudo que houver dentro deles.`)) return;
+      try {
+        const res = await fetch(`/api/workspace?workspace=${encodeURIComponent(workspace)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao deletar workspace');
+        if (currentWorkspace === workspace) goToProjects();
+        await loadProjects();
+      } catch (err) {
+        alert('Erro ao deletar workspace: ' + errMsg(err));
+      }
+    }
+
+    let allProjects: Json[] = [];
 
     // Uma metrica do card. Fica fora quando o valor e zero, para o card nao
     // virar uma fileira de zeros nos projetos vazios.
@@ -207,6 +272,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     }
 
     function renderProjects(projects: Json[]) {
+      allProjects = projects || [];
       const grid = $('projectsGrid');
       grid.innerHTML = '';
 
@@ -244,12 +310,16 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
             </h3>
             ${statsRow}
           </div>
-          <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-            <span title="Última atualização">${updatedText}</span>
-            ${relativeText ? `<span class="text-slate-500 ml-auto mr-2">${relativeText}</span>` : ''}
+          <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-2 text-[11px] text-slate-500">
+            <span class="truncate" title="Última atualização">${updatedText}${relativeText ? ` <span class="text-slate-600">· ${relativeText}</span>` : ''}</span>
+            <div class="ml-auto shrink-0 flex items-center">
             <button onclick="event.stopPropagation(); downloadZipDirect('${p.workspace_name}', '${p.project_name}')" title="Baixar ZIP" class="p-1 hover:text-emerald-400 transition">
               <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
             </button>
+            <button onclick="event.stopPropagation(); confirmDeleteProject('${p.workspace_name}', '${p.project_name}', ${p.page_count})" title="Deletar projeto" class="p-1 hover:text-rose-400 transition">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+            </div>
           </div>
         `;
         grid.appendChild(card);
@@ -260,6 +330,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       $('projectsView').classList.remove('hidden');
       $('searchView').classList.add('hidden');
       $('projectDetailView').classList.add('hidden');
+      $('backupsView').classList.add('hidden');
       currentProject = null;
       currentDocPath = null;
       currentSessionId = null;
@@ -285,7 +356,11 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       $('sidebarProjectTitle').innerText = `${workspace}/${project}`;
       updateBreadcrumb();
 
-      // Reset viewer para exibir a Atividade Recente (igual ao ai-memory original)
+      // Reset viewer para exibir a Atividade Recente (igual ao ai-memory original).
+      // O setDocMode e o que tira o editor da tela: zerar currentDocPath la em
+      // cima nao mexe no DOM, entao quem trocava de projeto no meio de uma
+      // edicao seguia com o editor aberto, carregado com o texto do anterior.
+      setDocMode('view');
       $('docHeader').classList.add('hidden');
       renderRecentActivityPlaceholder();
 
@@ -586,31 +661,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
             <div id="docMarkdownBody" class="markdown-body text-slate-300"></div>
           `;
           docViewer.appendChild(feedbackNode);
-          const bodyEl = $('docMarkdownBody');
-          bodyEl.innerHTML = marked.parse(currentDocData.body);
-
-          // Syntax Highlighting com highlight.js
-          bodyEl.querySelectorAll('pre code').forEach((block) => {
-            if (!block.classList.contains('language-mermaid')) {
-              hljs.highlightElement(block);
-            }
-          });
-
-          // Renderização de diagramas Mermaid
-          bodyEl.querySelectorAll<HTMLElement>('.language-mermaid, pre.mermaid').forEach(async (el, idx) => {
-            const code = el.innerText;
-            const insertId = 'mermaid-' + idx + '-' + Date.now();
-            try {
-              const { svg } = await mermaid.render(insertId, code);
-              const parent = el.closest('pre') || el;
-              const wrapper = document.createElement('div');
-              wrapper.className = 'my-4 p-4 rounded-lg bg-slate-900 border border-slate-800 flex justify-center';
-              wrapper.innerHTML = svg;
-              parent.replaceWith(wrapper);
-            } catch (err) {
-              console.warn('Mermaid render error:', err);
-            }
-          });
+          renderMarkdownInto($('docMarkdownBody'), currentDocData.body);
         }
       } else {
         btnEdit.className = 'px-2.5 py-1 text-xs rounded-md bg-blue-600 text-white font-medium';
@@ -619,16 +670,49 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         docEditor.classList.remove('hidden');
         if (feedbackSec) feedbackSec.classList.add('hidden');
 
-        $area('editorTextarea').value = currentDocData ? currentDocData.body : '';
+        const ed = editorCm();
+        ed.setValue(currentDocData ? currentDocData.body : '');
+        // O container acabou de sair do `hidden`: sem refresh o CodeMirror
+        // mediu altura zero e a doc abre em branco.
+        ed.refresh();
+        ed.focus();
+        applyEditorPreview();
         $input('editPinned').checked = !!currentDocData?.frontmatter?.pinned;
         $sel('editTier').value = currentDocData?.frontmatter?.tier || 'semantic';
       }
     }
 
+    // Markdown -> HTML com realce e mermaid. Mesmo caminho para a doc aberta e
+    // para o preview do editor, senao os dois divergem na primeira mudanca.
+    function renderMarkdownInto(el: HTMLElement, body: string) {
+      el.innerHTML = marked.parse(body || '');
+
+      el.querySelectorAll('pre code').forEach((block) => {
+        if (!block.classList.contains('language-mermaid')) {
+          hljs.highlightElement(block);
+        }
+      });
+
+      el.querySelectorAll<HTMLElement>('.language-mermaid, pre.mermaid').forEach(async (node, idx) => {
+        const code = node.innerText;
+        const insertId = 'mermaid-' + idx + '-' + Date.now();
+        try {
+          const { svg } = await mermaid.render(insertId, code);
+          const parent = node.closest('pre') || node;
+          const wrapper = document.createElement('div');
+          wrapper.className = 'my-4 p-4 rounded-lg bg-slate-900 border border-slate-800 flex justify-center';
+          wrapper.innerHTML = svg;
+          parent.replaceWith(wrapper);
+        } catch (err) {
+          console.warn('Mermaid render error:', err);
+        }
+      });
+    }
+
     async function saveCurrentDoc() {
       if (!currentProject || !currentDocPath) return;
 
-      const newBody = $area('editorTextarea').value;
+      const newBody = editorCm().getValue();
       const pinned = $input('editPinned').checked;
       const tier = $sel('editTier').value;
 
@@ -685,6 +769,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
         currentDocPath = null;
         currentDocData = null;
+        setDocMode('view');
         $('docHeader').classList.add('hidden');
         await loadProjectPages();
         renderRecentActivityView();
@@ -705,6 +790,164 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
     function downloadZipDirect(workspace: string, project: string) {
       window.location.href = `/api/download/zip?workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`;
+    }
+
+    // --- Backups ----------------------------------------------------------
+    // O upstream nao mantem historico: POST /admin/backup devolve o tar.gz e
+    // esquece. A dash guarda o arquivo e esta tela lista o que ela ja baixou —
+    // backup feito por fora (curl, cron no servidor) nao aparece aqui.
+    function openBackupsView() {
+      $('projectsView').classList.add('hidden');
+      $('searchView').classList.add('hidden');
+      $('projectDetailView').classList.add('hidden');
+      $('backupsView').classList.remove('hidden');
+      loadBackups();
+    }
+
+    function humanBytes(n: number): string {
+      const mb = n / 1024 / 1024;
+      return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+    }
+
+    async function loadBackups() {
+      const list = $('backupsList');
+      try {
+        const items: Json[] = await (await fetch('/api/backups')).json();
+        if (!items.length) {
+          list.innerHTML = '<div class="text-xs text-slate-500 py-10 text-center border border-dashed border-slate-800 rounded-xl">Nenhum backup ainda. O botão acima gera o primeiro.</div>';
+          return;
+        }
+        list.innerHTML = items.map((b: Json) => `
+          <div class="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-3">
+            <svg class="w-4 h-4 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+            <div class="min-w-0 flex-1">
+              <div class="text-xs font-mono text-slate-200 truncate">${escapeHtml(b.name)}</div>
+              <div class="text-[11px] text-slate-500">${new Date(b.created).toLocaleString('pt-BR')} · ${humanBytes(b.bytes)} · ${timeAgo(b.created)}</div>
+            </div>
+            <a href="/api/backup/file?name=${encodeURIComponent(b.name)}" title="Baixar" class="p-1.5 text-slate-400 hover:text-emerald-400 transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            </a>
+            <button onclick="deleteBackup('${b.name}')" title="Deletar" class="p-1.5 text-slate-400 hover:text-rose-400 transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+          </div>`).join('');
+      } catch (err) {
+        list.innerHTML = `<div class="text-xs text-rose-400 py-6 text-center">Erro ao listar backups: ${escapeHtml(errMsg(err))}</div>`;
+      }
+    }
+
+    async function createBackup() {
+      const btn = $('btnCreateBackup') as HTMLButtonElement;
+      const label = btn.innerHTML; // guarda o icone junto com o texto
+      btn.disabled = true;
+      btn.innerText = 'Gerando...'; // o upstream monta o tar.gz na hora, demora
+      try {
+        const res = await fetch('/api/backup', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao gerar backup');
+        await loadBackups();
+      } catch (err) {
+        alert('Erro ao gerar backup: ' + errMsg(err));
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+      }
+    }
+
+    async function deleteBackup(name: string) {
+      if (!confirm(`Apagar o backup ${name}?`)) return;
+      try {
+        const res = await fetch(`/api/backup?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao apagar');
+        await loadBackups();
+      } catch (err) {
+        alert('Erro ao apagar backup: ' + errMsg(err));
+      }
+    }
+
+    // --- Novo projeto -----------------------------------------------------
+    // O ai-memory nao tem "criar projeto": o projeto nasce quando a primeira
+    // pagina e escrita nele (memory_write_page cria o projeto que nao existe).
+    // Entao criar = semear notes/index.md e abrir a doc para edicao.
+    function openNewProjectModal() {
+      $input('newProjectName').value = '';
+      $input('newProjectWorkspace').value = 'default';
+      previewProjectSlug();
+      $('newProjectModal').classList.remove('hidden');
+      $input('newProjectName').focus();
+    }
+
+    function closeNewProjectModal() {
+      $('newProjectModal').classList.add('hidden');
+    }
+
+    // Nome vira diretorio no ai-memory: mesma forma dos projetos criados pelos
+    // hooks (minusculo, sem acento, sem espaco).
+    function slugProject(name: string): string {
+      return (name || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().trim()
+        .replace(/[^a-z0-9._-]+/g, '-')
+        .replace(/^[-.]+|[-.]+$/g, '');
+    }
+
+    function previewProjectSlug() {
+      const raw = $input('newProjectName').value;
+      const slug = slugProject(raw);
+      const hint = $('newProjectSlug');
+      hint.innerText = slug
+        ? `Vai virar: ${slug}`
+        : 'Minúsculas, sem acento nem espaço — o nome vira o diretório no ai-memory.';
+      hint.className = `text-[11px] mt-1 font-mono ${slug && slug !== raw.trim() ? 'text-amber-400' : 'text-slate-500'}`;
+    }
+
+    async function createProjectSubmit() {
+      const raw = $input('newProjectName').value.trim();
+      const project = slugProject(raw);
+      const workspace = slugProject($input('newProjectWorkspace').value) || 'default';
+      const seedPath = 'notes/index.md';
+
+      if (!project) {
+        alert('Informe um nome de projeto (letras, números, - . _)');
+        return;
+      }
+      if (allProjects.some((p: Json) => p.project_name === project && p.workspace_name === workspace)) {
+        alert(`O projeto ${workspace}/${project} já existe.`);
+        return;
+      }
+
+      const btn = $('btnCreateProject') as HTMLButtonElement;
+      btn.disabled = true;
+      btn.innerText = 'Criando...';
+      try {
+        const res = await fetch('/api/page', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspace,
+            project,
+            path: seedPath,
+            // O H1 vira o titulo da pagina no ai-memory; usa o nome como foi
+            // digitado, com acento e maiuscula, nao o slug do diretorio.
+            body: `# ${raw}\n\n_Projeto criado pela dash. Descreva aqui o escopo e o que vale lembrar._\n`,
+            tier: 'semantic'
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Falha ao criar projeto');
+
+        closeNewProjectModal();
+        loadProjects(); // atualiza a home por baixo, sem segurar a navegacao
+        await openProject(workspace, project);
+        await loadDoc(seedPath);
+        setDocMode('edit');
+      } catch (err) {
+        alert('Erro ao criar projeto: ' + errMsg(err));
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Criar Projeto';
+      }
     }
 
     // Modal Criação de Nova Doc
@@ -1698,6 +1941,109 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       await loadProjectPages();
     }
 
+    // --- Editor markdown (CodeMirror 5) -----------------------------------
+    // A <textarea> do HTML segue sendo o no de origem: `fromTextArea` a esconde
+    // e assume o texto. Criado na primeira edicao, nao no load — quem so le doc
+    // nao paga por ele.
+    let cm: any = null;
+
+    function editorCm() {
+      if (cm) return cm;
+      // `gfm` cobre markdown + blocos de codigo; o overlay so acrescenta o
+      // `[[wikilink]]`, que e sintaxe do ai-memory e nao do markdown.
+      CodeMirror.defineMode('gfm-wiki', (cfg: Json) =>
+        CodeMirror.overlayMode(CodeMirror.getMode(cfg, 'gfm'), {
+          token(stream: Json) {
+            if (stream.match(/\[\[[^\]\n]*\]\]/)) return 'wikilink';
+            while (stream.next() != null && !stream.match(/\[\[/, false)) { /* pula ate o proximo [[ */ }
+            return null;
+          }
+        }));
+
+      // Enter/Tab/setas sao do popup do wikilink quando ele esta aberto; fora
+      // disso, CodeMirror.Pass devolve a tecla para o comportamento padrao.
+      const whenPopup = (fn: () => void) => () => {
+        if (wikiStart < 0 || !wikiMatches.length) return CodeMirror.Pass;
+        fn();
+      };
+
+      cm = CodeMirror.fromTextArea($area('editorTextarea'), {
+        mode: 'gfm-wiki',
+        theme: 'aim',
+        lineNumbers: true,
+        lineWrapping: true,
+        styleActiveLine: true,
+        indentUnit: 2,
+        extraKeys: {
+          Up: whenPopup(() => moveWikiIndex(-1)),
+          Down: whenPopup(() => moveWikiIndex(1)),
+          Tab: whenPopup(() => applyWikiLink(wikiIndex)),
+          Enter: (c: Json) => {
+            if (wikiStart >= 0 && wikiMatches.length) return applyWikiLink(wikiIndex);
+            c.execCommand('newlineAndIndentContinueMarkdownList');
+          },
+          Esc: () => {
+            if (wikiStart < 0) return CodeMirror.Pass;
+            closeWikiPopup();
+          },
+          'Ctrl-S': () => saveCurrentDoc(),
+          'Cmd-S': () => saveCurrentDoc()
+        }
+      });
+      cm.on('changes', onEditorInput);
+      cm.on('changes', scheduleEditorPreview);
+      cm.on('scroll', syncPreviewScroll);
+      cm.on('blur', closeWikiPopup);
+      return cm;
+    }
+
+    // --- Preview lado a lado ----------------------------------------------
+    // Desligado por padrao (a tela ja e estreita com a sidebar); a escolha fica
+    // no localStorage porque quem edita muito quer o preview em toda doc.
+    let previewOn = localStorage.getItem('aim:editorPreview') === '1';
+    let previewTimer = 0;
+
+    function toggleEditorPreview() {
+      previewOn = !previewOn;
+      localStorage.setItem('aim:editorPreview', previewOn ? '1' : '0');
+      applyEditorPreview();
+    }
+
+    function applyEditorPreview() {
+      $('editorPreview').classList.toggle('hidden', !previewOn);
+      $('btnTogglePreview').className = previewOn
+        ? 'ml-auto shrink-0 px-2 py-1 rounded-md border border-blue-700/60 bg-blue-900/40 text-blue-300 flex items-center gap-1'
+        : 'ml-auto shrink-0 px-2 py-1 rounded-md border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200 flex items-center gap-1';
+      if (previewOn) drawEditorPreview();
+      cm?.refresh(); // a metade que sobrou mudou de largura
+    }
+
+    // Redesenhar a cada tecla custa marked + hljs + mermaid; 250ms depois da
+    // ultima tecla e imperceptivel ao digitar e evita o retrabalho.
+    function scheduleEditorPreview() {
+      if (!previewOn) return;
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(drawEditorPreview, 250);
+    }
+
+    function drawEditorPreview() {
+      renderMarkdownInto($('editorPreviewBody'), editorCm().getValue());
+      syncPreviewScroll();
+    }
+
+    // ponytail: rolagem proporcional, nao casada por linha/bloco. Mapear linha
+    // do fonte para o no renderizado exige source maps do marked; a proporcao
+    // acerta o suficiente e so o editor manda (uma direcao, sem loop).
+    function syncPreviewScroll() {
+      if (!previewOn || !cm) return;
+      const pane = $('editorPreview');
+      const info = cm.getScrollInfo();
+      const editorMax = info.height - info.clientHeight;
+      const previewMax = pane.scrollHeight - pane.clientHeight;
+      if (editorMax <= 0 || previewMax <= 0) return;
+      pane.scrollTop = (info.top / editorMax) * previewMax;
+    }
+
     // --- Autocomplete de wikilink no editor -------------------------------
     // Digitar `[[` abre a lista das paginas do projeto (a mesma ja carregada na
     // sidebar, sem request novo). O alvo do link e o path sem `.md`: slug puro
@@ -1727,6 +2073,11 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       active?.scrollIntoView({ block: 'nearest' });
     }
 
+    function moveWikiIndex(delta: number) {
+      wikiIndex = (wikiIndex + delta + wikiMatches.length) % wikiMatches.length;
+      drawWikiPopup('');
+    }
+
     // Partes puras, separadas do DOM para poderem ser testadas no self-check.
     function wikiOpenMatch(beforeCaret: string): { term: string; start: number } | null {
       const open = beforeCaret.match(/\[\[([^\[\]\n]*)$/);
@@ -1742,18 +2093,21 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     function applyWikiLink(i: number) {
       const page = wikiMatches[i];
       if (!page || wikiStart < 0) return;
-      const ta = $area('editorTextarea');
-      const next = insertWikiLink(ta.value, wikiStart, ta.selectionStart, String(page.path));
-      ta.value = next.value;
+      const c = editorCm();
+      const caret = c.indexFromPos(c.getCursor());
+      const next = insertWikiLink(c.getValue(), wikiStart, caret, String(page.path));
+      // replaceRange em vez de setValue: mantem undo, scroll e o resto do doc.
+      c.replaceRange(next.value.slice(wikiStart, next.caret), c.posFromIndex(wikiStart), c.posFromIndex(caret));
       closeWikiPopup();
-      ta.focus();
-      ta.setSelectionRange(next.caret, next.caret);
+      c.focus();
+      c.setCursor(c.posFromIndex(next.caret));
     }
 
     function onEditorInput() {
-      const ta = $area('editorTextarea');
+      const c = editorCm();
+      const caret = c.indexFromPos(c.getCursor());
       // `[[` mais o que foi digitado depois dele, sem passar de linha.
-      const open = wikiOpenMatch(ta.value.slice(0, ta.selectionStart));
+      const open = wikiOpenMatch(c.getValue().slice(0, caret));
       if (!open) return closeWikiPopup();
 
       const term = open.term.toLowerCase();
@@ -1765,20 +2119,6 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         .slice(0, 8);
       wikiIndex = 0;
       drawWikiPopup(open.term);
-    }
-
-    function onEditorKeydown(e: KeyboardEvent) {
-      if (wikiStart < 0) return;
-      if (e.key === 'Escape') { closeWikiPopup(); e.preventDefault(); return; }
-      if (!wikiMatches.length) return;
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        wikiIndex = (wikiIndex + (e.key === 'ArrowDown' ? 1 : wikiMatches.length - 1)) % wikiMatches.length;
-        drawWikiPopup('');
-        e.preventDefault();
-      } else if (e.key === 'Enter' || e.key === 'Tab') {
-        applyWikiLink(wikiIndex);
-        e.preventDefault();
-      }
     }
 
     function escapeHtml(text: string) {

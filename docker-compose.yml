@@ -14,4 +14,7 @@ services:
       # montar os dois deixa recarregar sem rebuild da imagem.
       - ./dist:/app/dist:ro
       - ./public:/app/public:ro
+      # Backups ficam no host: o upstream nao guarda nenhum, e perder o
+      # historico junto com o container derrotaria o proposito.
+      - ./backups:/app/backups
 

@@ -151,6 +151,20 @@ try {
       assert.strictEqual(n.degree, degree.get(n.id), `grau errado em ${n.id}`);
       if (n.orphan) assert.strictEqual(n.degree, 0, `${n.id} marcado orfao mas tem arestas`);
     }
+    // Wikilink escrito so com o basename (`[[mapa-repos]]`) vem sem `links` do
+    // upstream; o grafo tem que resolver assim mesmo, senao a pagina vira orfa.
+    const basenames = new Map<string, string>();
+    for (const n of nodes) if (!n.external && !basenames.has(String(n.path).replace(/\.md$/, '').split('/').pop()!))
+      basenames.set(String(n.path).replace(/\.md$/, '').split('/').pop()!, n.id);
+    for (const n of nodes.filter((n: Json) => !n.external).slice(0, 40)) {
+      const page: Json = await getJson(`/api/page?${q({ workspace: n.workspace, project: n.project, path: n.path })}`);
+      const alvos = [...String(page.body_markdown || '').matchAll(/\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]/g)]
+        .map((m) => basenames.get(m[1]!.trim().replace(/\.md$/, '').split('/').pop()!))
+        .filter((id) => id && id !== n.id);
+      for (const alvo of alvos)
+        assert(edges.some((e: Json) => e.from === n.id && e.to === alvo),
+          `wikilink de ${n.path} para ${alvo} sumiu do grafo`);
+    }
     console.log(`✅ GET /api/graph montou ${nodes.length} nos e ${edges.length} arestas em ${graphTarget.project} (${nodes.filter((n: Json) => n.external).length} externos)`);
   } else {
     console.log('⏭️  Nenhum projeto com links; passo 7a pulado');
@@ -268,6 +282,61 @@ try {
   assert.strictEqual(inserted.value, 'ver [[notes/x]] aqui');
   assert.strictEqual(inserted.caret, 15, 'caret deve parar depois do ]]');
   console.log('✅ Editor: autocomplete de wikilink insere o path sem .md');
+
+  // 9e-bis. Editor markdown: CodeMirror + overlay do wikilink + preview.
+  // Sao pecas de DOM/CDN, entao o que da para checar sem browser e que o HTML
+  // pede os arquivos e que o bundle registra o modo e o toggle.
+  assert(html.includes('codemirror/5.65.16/codemirror.min.js'), 'CodeMirror sumiu do HTML');
+  assert(html.includes('mode/gfm/gfm.min.js') && html.includes('addon/mode/overlay.min.js'),
+    'modo gfm + overlay sao o que colore markdown e wikilink');
+  assert(html.includes('id="editorPreview"') && html.includes('onclick="toggleEditorPreview()"'),
+    'preview lado a lado e seu botao sumiram do HTML');
+  assert(bundle.includes("defineMode('gfm-wiki'") || bundle.includes('defineMode("gfm-wiki"'),
+    'overlay do wikilink sumiu do bundle');
+  assert(/function toggleEditorPreview\(/.test(bundle) && bundle.includes('aim:editorPreview'),
+    'toggle do preview sumiu do bundle');
+  console.log('✅ Editor: CodeMirror com realce de wikilink e preview alternavel');
+
+  // 9e-ter. Novo projeto: nao ha endpoint de criar projeto no upstream, ele
+  // nasce da primeira pagina. O que da para checar sem escrever de verdade e o
+  // slug (o nome vira diretorio) e a presenca do modal.
+  assert(html.includes('id="newProjectModal"') && html.includes('onclick="openNewProjectModal()"'),
+    'criacao de projeto sumiu da home');
+  const slugSrc = bundle.match(/function slugProject\([\s\S]*?\n  \}/)?.[0]
+    || bundle.match(/function slugProject\([\s\S]*?\n\}/)?.[0];
+  assert(slugSrc, 'slugProject sumiu do bundle');
+  const slugProject = new Function(`${slugSrc}; return slugProject;`)() as (n: string) => string;
+  assert.strictEqual(slugProject('Cliente Acme'), 'cliente-acme');
+  assert.strictEqual(slugProject('Projeto Ção/Teste'), 'projeto-cao-teste');
+  assert.strictEqual(slugProject('  --sendflow--  '), 'sendflow', 'nao pode sobrar tracos nas pontas');
+  assert.strictEqual(slugProject(''), '');
+  console.log('✅ Home: criar projeto semeia a primeira pagina e o slug vira o diretorio');
+
+  // 9e-quater. Deletar projeto/workspace: as rotas /admin sao as unicas que
+  // apagam de verdade e nao tem dry-run, entao o teste so exercita as recusas —
+  // parametro faltando e a guarda do workspace `default`.
+  const wss: Json[] = await getJson('/api/workspaces');
+  assert(Array.isArray(wss) && wss.some((w: Json) => w.workspace_name === 'default'),
+    '/api/workspaces deve listar ao menos o default');
+  const semParam = await fetch(`${BASE}/api/project`, { method: 'DELETE' });
+  assert.strictEqual(semParam.status, 400, 'DELETE /api/project sem escopo tem que recusar');
+  const defProtegido = await fetch(`${BASE}/api/workspace?workspace=default`, { method: 'DELETE' });
+  assert.strictEqual(defProtegido.status, 400, 'o workspace default nao pode ser deletado pela dash');
+  assert(((await defProtegido.json()) as Json).error, 'a recusa do default precisa dizer o motivo');
+  console.log(`✅ Delete: ${wss.length} workspace(s) listado(s), rota recusa escopo vazio e protege o default`);
+
+  // 9e-quinquies. Backups: gerar custa um tar.gz de ~9 MB no upstream, entao o
+  // teste so lista e checa o filtro do nome — que e o que impede `../` chegar
+  // ao fs do container.
+  const backups: Json[] = await getJson('/api/backups');
+  assert(Array.isArray(backups), '/api/backups deve devolver array');
+  assert(backups.every((b: Json) => /^backup-[0-9T-]+\.tar\.gz$/.test(b.name) && b.bytes > 0),
+    'backup listado tem que ter nome no padrao e tamanho');
+  for (const evil of ['../../etc/passwd', '..%2F..%2Fetc%2Fpasswd', 'server.js']) {
+    const r = await fetch(`${BASE}/api/backup/file?name=${encodeURIComponent(evil)}`);
+    assert.strictEqual(r.status, 404, `download de backup aceitou nome fora do padrao: ${evil}`);
+  }
+  console.log(`✅ Backups: ${backups.length} no disco da dash, nome fora do padrao nao baixa`);
 
   // 9f. Rotas reais: a URL tem que sobreviver a um reload. Testa o ida-e-volta
   // entre buildUrl (estado -> URL) e parseRoute (URL -> estado), e o fallback

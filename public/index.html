@@ -28,6 +28,22 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+  <!-- Editor markdown: CodeMirror 5 (script classico, sem bundler). O modo gfm
+       cobre o markdown e os blocos de codigo; `overlay` e onde entra o wikilink. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/overlay.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/continuelist.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/display/placeholder.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/selection/active-line.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/meta.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/gfm/gfm.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/yaml/yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/shell/shell.min.js"></script>
   <script>
     mermaid.initialize({ startOnLoad: false, theme: 'dark' });
   </script>
@@ -52,6 +68,44 @@
        Some com ele: a lupa ocupa esse canto e Esc continua limpando o campo. */
     input[type="search"]::-webkit-search-cancel-button,
     input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+    /* Tema do editor (CodeMirror `cm-s-aim`), na mesma paleta slate da dash. */
+    #docEditor .CodeMirror {
+      flex: 1 1 0%; min-height: 0; height: auto;
+      background: #0f172a; color: #e2e8f0;
+      border: 1px solid #1e293b; border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px; line-height: 1.65;
+    }
+    .cm-s-aim .CodeMirror-lines { padding: 10px 4px; }
+    .cm-s-aim .CodeMirror-gutters { background: #0f172a; border-right: 1px solid #1e293b; }
+    .cm-s-aim .CodeMirror-linenumber { color: #475569; }
+    .cm-s-aim .CodeMirror-cursor { border-left: 1.5px solid #93c5fd; }
+    .cm-s-aim .CodeMirror-activeline-background { background: #1e293b40; }
+    .cm-s-aim .CodeMirror-selected { background: #1d4ed855; }
+    .cm-s-aim .CodeMirror-focused .CodeMirror-selected { background: #2563eb55; }
+    .cm-s-aim .CodeMirror-matchingbracket { color: #38bdf8 !important; text-decoration: underline; }
+    .cm-s-aim .cm-header { color: #60a5fa; font-weight: 700; }
+    .cm-s-aim .cm-header-1 { font-size: 1.25em; }
+    .cm-s-aim .cm-header-2 { font-size: 1.12em; }
+    .cm-s-aim .cm-quote { color: #94a3b8; font-style: italic; }
+    .cm-s-aim .cm-link { color: #38bdf8; }
+    .cm-s-aim .cm-url { color: #64748b; }
+    .cm-s-aim .cm-em { font-style: italic; color: #cbd5e1; }
+    .cm-s-aim .cm-strong { font-weight: 700; color: #f1f5f9; }
+    .cm-s-aim .cm-comment { color: #a5b4fc; }            /* codigo (inline e cercado) */
+    .cm-s-aim .cm-variable-2 { color: #f0abfc; }         /* marcador de lista */
+    .cm-s-aim .cm-hr { color: #475569; font-weight: 700; }
+    .cm-s-aim .cm-keyword, .cm-s-aim .cm-tag { color: #f472b6; }
+    .cm-s-aim .cm-atom, .cm-s-aim .cm-number { color: #fbbf24; }
+    .cm-s-aim .cm-string, .cm-s-aim .cm-string-2 { color: #86efac; }
+    .cm-s-aim .cm-def, .cm-s-aim .cm-variable { color: #7dd3fc; }
+    .cm-s-aim .cm-property, .cm-s-aim .cm-attribute { color: #93c5fd; }
+    /* O que a edicao ganhou: `[[wikilink]]` marcado como no viewer. */
+    .cm-s-aim .cm-wikilink {
+      color: #22d3ee; font-weight: 600;
+      background: rgba(34, 211, 238, 0.12);
+      border-radius: 3px;
+    }
     .drop-active {
       border-color: #3b82f6 !important;
       background-color: rgba(59, 130, 246, 0.08) !important;
@@ -101,6 +155,27 @@
 
   <!-- Main Content Layout -->
   <div class="flex-1 flex overflow-hidden">
+    <!-- View 4: Backups. O ai-memory nao guarda backup nenhum (o POST devolve o
+         tar.gz e esquece), entao o historico aqui e o que a dash ja baixou. -->
+    <div id="backupsView" class="flex-1 overflow-y-auto p-6 hidden">
+      <div class="max-w-3xl mx-auto">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h1 class="text-xl font-bold text-slate-100">Backups</h1>
+            <p class="text-xs text-slate-400 mt-0.5">Snapshots do ai-memory (wiki + SQLite) guardados no disco da dash.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="goToProjects()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200">Voltar</button>
+            <button id="btnCreateBackup" onclick="createBackup()" class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg text-white font-medium flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+              Novo backup
+            </button>
+          </div>
+        </div>
+        <div id="backupsList" class="space-y-2"></div>
+      </div>
+    </div>
+
     <!-- View 1: Projects Grid (Default) -->
     <div id="projectsView" class="flex-1 overflow-y-auto p-6">
       <div class="max-w-6xl mx-auto">
@@ -109,11 +184,25 @@
             <h1 class="text-xl font-bold text-slate-100">Projetos</h1>
             <p class="text-xs text-slate-400 mt-0.5">Workspaces e projetos indexados no ai-memory.</p>
           </div>
+          <div class="flex items-center gap-2">
+          <button onclick="openBackupsView()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+            Backups
+          </button>
+          <button onclick="openNewProjectModal()" class="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 border border-blue-500 rounded-lg text-white font-medium flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            Novo projeto
+          </button>
           <button onclick="loadProjects()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-200 flex items-center gap-1.5">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
             Atualizar
           </button>
+          </div>
         </div>
+
+        <!-- Workspaces: o nivel acima do projeto. Aqui so para ver a divisao e
+             remover um workspace que sobrou vazio. -->
+        <div id="workspacesBar" class="flex flex-wrap items-center gap-2 mb-5"></div>
 
         <div id="projectsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <!-- Cards de projetos preenchidos via JS -->
@@ -299,17 +388,29 @@
 
         <!-- Edit Mode: Code / Markdown Editor -->
         <div id="docEditor" class="flex-1 flex flex-col overflow-hidden hidden">
-          <div class="flex-1 p-4 flex flex-col relative">
+          <div class="flex-1 min-h-0 p-4 flex flex-col relative">
             <div class="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500">
               <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m4.5-4.5l1.5-1.5a4 4 0 015.656 5.656l-3 3a4 4 0 01-5.656 0"></path></svg>
               <span>Digite <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">[[</code> para linkar outra página do projeto — a lista filtra por título ou caminho, <kbd class="px-1 rounded bg-slate-800 text-slate-300">↑↓</kbd> navega, <kbd class="px-1 rounded bg-slate-800 text-slate-300">Enter</kbd> insere.</span>
+              <button id="btnTogglePreview" onclick="toggleEditorPreview()" title="Mostrar/esconder o preview lado a lado" class="ml-auto shrink-0 px-2 py-1 rounded-md border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                <span>Preview</span>
+              </button>
             </div>
-            <textarea
-              id="editorTextarea"
-              class="w-full flex-1 bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-sm text-slate-200 focus:outline-none focus:border-blue-500 resize-none"
-              placeholder="# Título do documento... (digite [[ para linkar outra página)"
-              spellcheck="false"
-            ></textarea>
+            <div class="flex-1 flex gap-3 min-h-0">
+              <!-- O CodeMirror substitui esta textarea in loco (fromTextArea). -->
+              <div id="editorPane" class="flex-1 min-w-0 min-h-0 flex flex-col">
+                <textarea
+                  id="editorTextarea"
+                  class="w-full flex-1 bg-slate-900 border border-slate-800 rounded-lg p-4 font-mono text-sm text-slate-200 focus:outline-none focus:border-blue-500 resize-none"
+                  placeholder="# Título do documento... (digite [[ para linkar outra página)"
+                  spellcheck="false"
+                ></textarea>
+              </div>
+              <div id="editorPreview" class="hidden flex-1 min-w-0 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900 p-4">
+                <div id="editorPreviewBody" class="markdown-body text-slate-300"></div>
+              </div>
+            </div>
             <!-- Autocomplete de wikilink: aberto ao digitar [[ no textarea -->
             <div id="wikiLinkPopup" class="hidden absolute left-4 right-4 bottom-4 max-h-56 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/95 backdrop-blur shadow-xl z-20 text-xs"></div>
           </div>
@@ -339,6 +440,43 @@
           </div>
         </div>
       </main>
+    </div>
+  </div>
+
+  <!-- Modal Novo Projeto -->
+  <!-- Nao existe "criar projeto" no ai-memory: o projeto nasce junto da
+       primeira pagina escrita nele, entao o modal semeia notes/index.md. -->
+  <div id="newProjectModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 w-full max-w-md shadow-xl">
+      <h3 class="text-base font-semibold text-slate-100 mb-1">Novo Projeto</h3>
+      <p class="text-[11px] text-slate-500 mb-4">O projeto passa a existir com a primeira página; a dash cria <code class="text-slate-400">notes/index.md</code> para você editar em seguida.</p>
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">Nome do projeto:</label>
+          <input
+            id="newProjectName"
+            type="text"
+            placeholder="ex: sendflow, pessoal, cliente-acme"
+            oninput="previewProjectSlug()"
+            onkeydown="if(event.key==='Enter') createProjectSubmit()"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+          >
+          <p id="newProjectSlug" class="text-[11px] text-slate-500 mt-1">Minúsculas, sem acento nem espaço — o nome vira o diretório no ai-memory.</p>
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">Workspace:</label>
+          <input
+            id="newProjectWorkspace"
+            type="text"
+            value="default"
+            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+          >
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button onclick="closeNewProjectModal()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg">Cancelar</button>
+        <button id="btnCreateProject" onclick="createProjectSubmit()" class="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg">Criar Projeto</button>
+      </div>
     </div>
   </div>
 
