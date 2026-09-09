@@ -504,6 +504,19 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       duplicate: { icon: '⧉',  tone: 'text-rose-400',  title: 'Outra página deste projeto tem o mesmo título' }
     };
 
+    const SVG_DOWNLOAD = '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>';
+    const SVG_TRASH = '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>';
+
+    // Botao de icone que nao dispara o clique do item em volta.
+    function iconButton(svg: string, title: string, tone: string, onClick: () => void): HTMLButtonElement {
+      const b = document.createElement('button');
+      b.className = `p-0.5 rounded text-slate-500 ${tone} transition`;
+      b.title = title;
+      b.innerHTML = svg;
+      b.onclick = (e: MouseEvent) => { e.stopPropagation(); onClick(); };
+      return b;
+    }
+
     function renderSidebarPages(pages: Json[]) {
       const container = $('pagesListContainer');
       container.innerHTML = '';
@@ -553,11 +566,20 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
           const flagIcons = flags.map((f: Json) => `<span class="${f.tone}" title="${f.title}">${f.icon}</span>`).join('');
 
           item.innerHTML = `
-            <span class="truncate flex items-center gap-1.5" title="${p.title || p.path}">
-              ${flagIcons}<span class="truncate">${p.title || p.path}</span>
+            <span class="truncate flex items-center gap-1.5" title="${escapeHtml(p.title || p.path)}">
+              ${flagIcons}<span class="truncate">${escapeHtml(p.title || p.path)}</span>
             </span>
-            <span class="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition shrink-0 ml-1">.md</span>
           `;
+
+          // Baixar e deletar direto do item, no lugar onde antes so aparecia o
+          // sufixo `.md`. Montados via DOM, e nao no innerHTML, para o path nao
+          // ter que sobreviver a um onclick inline com aspas.
+          const actions = document.createElement('span');
+          actions.className = 'shrink-0 ml-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition';
+          actions.appendChild(iconButton(SVG_DOWNLOAD, `Baixar ${p.path}`, 'hover:text-emerald-400', () => downloadDoc(p.path)));
+          actions.appendChild(iconButton(SVG_TRASH, `Deletar ${p.path}`, 'hover:text-rose-400', () => confirmDeleteDoc(p.path)));
+          item.appendChild(actions);
+
           list.appendChild(item);
         });
 
@@ -755,22 +777,25 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       }
     }
 
-    async function confirmDeleteDoc() {
-      if (!currentProject || !currentDocPath) return;
-      const ok = confirm(`Tem certeza que deseja DELETAR o documento "${currentDocPath}" do ai-memory?`);
+    async function confirmDeleteDoc(docPath: string | null = currentDocPath) {
+      if (!currentProject || !docPath) return;
+      const ok = confirm(`Tem certeza que deseja DELETAR o documento "${docPath}" do ai-memory?`);
       if (!ok) return;
 
       try {
-        const res = await fetch(`/api/page?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject!)}&path=${encodeURIComponent(currentDocPath)}`, {
+        const res = await fetch(`/api/page?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject!)}&path=${encodeURIComponent(docPath)}`, {
           method: 'DELETE'
         });
         const data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || 'Falha ao deletar');
 
-        currentDocPath = null;
-        currentDocData = null;
-        setDocMode('view');
-        $('docHeader').classList.add('hidden');
+        // Deletar pela lista lateral nao mexe na doc aberta, a menos que seja ela.
+        if (currentDocPath === docPath) {
+          currentDocPath = null;
+          currentDocData = null;
+          setDocMode('view');
+          $('docHeader').classList.add('hidden');
+        }
         await loadProjectPages();
         renderRecentActivityView();
       } catch (err) {
@@ -778,9 +803,9 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       }
     }
 
-    function downloadCurrentDoc() {
-      if (!currentProject || !currentDocPath) return;
-      window.location.href = `/api/download/file?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject!)}&path=${encodeURIComponent(currentDocPath)}`;
+    function downloadDoc(docPath: string | null = currentDocPath) {
+      if (!currentProject || !docPath) return;
+      window.location.href = `/api/download/file?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject!)}&path=${encodeURIComponent(docPath)}`;
     }
 
     function downloadProjectZip() {
@@ -1095,9 +1120,15 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         <a href="javascript:void(0)" onclick="openProject('${escapeHtml(currentWorkspace)}', '${escapeHtml(currentProject!)}')" class="text-slate-300 hover:text-white font-medium">${escapeHtml(currentWorkspace)}/${escapeHtml(currentProject!)}</a>
       `;
       if (currentDocPath) {
+        // O path e truncado no meio quando o nome e longo, dai o title no hover
+        // e o botao de copiar: e o que se cola num [[wikilink]] ou numa chamada
+        // do MCP.
         html += `
           <span>/</span>
-          <span class="text-blue-400 truncate max-w-xs font-mono">${currentDocPath}</span>
+          <span class="text-blue-400 truncate max-w-xs font-mono" title="${escapeHtml(currentDocPath)}">${escapeHtml(currentDocPath)}</span>
+          <button id="btnCopyPath" onclick="copyDocPath()" title="Copiar caminho do documento" class="shrink-0 p-1 rounded text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+          </button>
         `;
       }
       b.innerHTML = html;
@@ -1667,6 +1698,23 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         const orig = lbl.innerText;
         lbl.innerText = 'Copiado!';
         setTimeout(() => { lbl.innerText = orig; }, 2000);
+      });
+    }
+
+    function copyDocPath() {
+      if (!currentDocPath) return;
+      navigator.clipboard.writeText(currentDocPath).then(() => {
+        const btn = $('btnCopyPath');
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+        btn.classList.add('text-emerald-400');
+        setTimeout(() => {
+          // O breadcrumb pode ter sido reescrito nesse meio tempo; so restaura
+          // se ainda for o mesmo botao.
+          if (!btn.isConnected) return;
+          btn.innerHTML = orig;
+          btn.classList.remove('text-emerald-400');
+        }, 1500);
       });
     }
 
