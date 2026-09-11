@@ -1339,16 +1339,22 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       const cached = graphLayout && graphLayout.key === graphKey() ? graphLayout.pos : null;
       const restored = !!cached && nodes.every((n: Json) => cached[n.id]);
 
-      nodes.forEach((n: Json, i: number) => {
-        if (restored) {
-          n.x = cached![n.id]!.x; n.y = cached![n.id]!.y;
-        } else {
-          const a = (i / nodes.length) * Math.PI * 2;
-          n.x = W / 2 + Math.cos(a) * Math.min(W, H) * 0.35;
-          n.y = H / 2 + Math.sin(a) * Math.min(W, H) * 0.35;
-        }
-        n.vx = 0; n.vy = 0;
+      // Conectados nascem num circulo pequeno no centro e orfas num anel por
+      // fora: comecando todos no mesmo anel, o cluster assentava na borda.
+      const connected = nodes.filter((n: Json) => n.degree > 0);
+      const orphans = nodes.filter((n: Json) => n.degree === 0);
+      const place = (group: Json[], r: number) => group.forEach((n: Json, i: number) => {
+        const a = (i / group.length) * Math.PI * 2;
+        n.x = W / 2 + Math.cos(a) * r;
+        n.y = H / 2 + Math.sin(a) * r;
       });
+      if (restored) {
+        nodes.forEach((n: Json) => { n.x = cached![n.id]!.x; n.y = cached![n.id]!.y; });
+      } else {
+        place(connected, Math.sqrt(connected.length) * 12);
+        place(orphans, Math.min(W, H) * 0.45);
+      }
+      nodes.forEach((n: Json) => { n.vx = 0; n.vy = 0; });
       graphNodesRef = nodes;
 
       const radius = (n: Json) => 4 + Math.min(n.degree, 8);
@@ -1400,6 +1406,11 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         g.style.cursor = 'pointer';
         g.classList.add('gnode');
         if (n.degree < 3) g.classList.add('minor');
+        // Caixa que o no ocupa: circulo em cima, label de 9px (~5.2px/char)
+        // embaixo. A colisao usa isso; so o raio deixava nome em cima de nome.
+        n.hw = Math.max(radius(n), shortTitle(n.title).length * 2.6);
+        n.top = radius(n);
+        n.bot = radius(n) + 13;
 
         const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         c.setAttribute('r', String(radius(n)));
@@ -1417,7 +1428,14 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         t.textContent = shortTitle(n.title);
         g.appendChild(t);
 
-        g.onmouseenter = () => setHover(n);
+        // Vai pro fim do grupo: o SVG desenha em ordem, entao o nome cheio
+        // fica por cima dos vizinhos em vez de embaixo. So move se ainda nao
+        // for o ultimo: mover dispara mouseenter de novo, e o loop tirava o no
+        // do DOM entre mousedown e mouseup, matando o click.
+        g.onmouseenter = () => {
+          if (gNodes.lastChild !== g) gNodes.appendChild(g);
+          setHover(n);
+        };
         g.onmouseleave = () => setHover(null);
         g.onclick = () => {
           if (graphView.panned) return;   // arrastou o fundo: nao e clique
@@ -1429,7 +1447,12 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
       // Verlet simplificado: repulsao entre todos, mola nas arestas, gravidade
       // fraca ao centro. Alpha decai para a coisa parar sozinha.
+      // Frames proporcionais ao tamanho: grafo de 20 nos assenta em ~70 frames
+      // e esperava os mesmos ~4s de um de 150.
+      const frames = Math.min(260, Math.max(70, nodes.length * 3));
+      const decay = Math.pow(0.02, 1 / frames);
       let alpha = 1;
+      let ring = -1;   // raio do anel das orfas, suavizado entre frames
       const tick = () => {
         for (let i = 0; i < nodes.length; i++) {
           for (let j = i + 1; j < nodes.length; j++) {
@@ -1437,12 +1460,23 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
             let dx = b.x - a.x, dy = b.y - a.y;
             let d2 = dx * dx + dy * dy || 0.01;
             const d = Math.sqrt(d2);
-            // Colisao: separa na marra quem esta mais perto que os dois raios
-            // mais folga pro label. Repulsao sozinha deixava nos empilhados.
-            const minD = radius(a) + radius(b) + 8;
-            if (d < minD) {
-              const push = (minD - d) / 2 / d;
-              a.x -= dx * push; a.y -= dy * push; b.x += dx * push; b.y += dy * push;
+            // Colisao por caixa, pelo eixo de menor penetracao. Comeca como
+            // empurrao na velocidade e so vira correcao de posicao conforme
+            // o alpha esfria: corrigir posicao desde o 1o frame brigava com as
+            // outras forcas e o grafo grande tremia ate assentar.
+            const ox = a.hw + b.hw + 6 - Math.abs(dx);
+            const oy = (dy >= 0 ? a.bot + b.top : a.top + b.bot) + 4 - Math.abs(dy);
+            if (ox > 0 && oy > 0) {
+              const hard = (1 - alpha) * (1 - alpha) / 2;
+              if (ox < oy) {
+                const s = Math.sign(dx || 1);
+                a.vx -= ox * 0.15 * s; b.vx += ox * 0.15 * s;
+                a.x -= ox * hard * s; b.x += ox * hard * s;
+              } else {
+                const s = Math.sign(dy || 1);
+                a.vy -= oy * 0.15 * s; b.vy += oy * 0.15 * s;
+                a.y -= oy * hard * s; b.y += oy * hard * s;
+              }
             }
             if (d2 > 250000) continue;             // longe demais: ignora
             // Piso no d²: par nascido quase no mesmo ponto levava um chute de
@@ -1460,9 +1494,23 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
           e.source.vx += fx; e.source.vy += fy;
           e.target.vx -= fx; e.target.vy -= fy;
         }
+        // Orfas sao puxadas para um anel 40px alem do no conectado mais
+        // distante; conectados, com gravidade um pouco maior, ficam no miolo.
+        // O raio segue o cluster devagar: recalculado seco a cada frame, ele
+        // pulava junto com o no mais distante e o anel inteiro oscilava.
+        let far = 0;
+        for (const n of connected) far = Math.max(far, Math.hypot(n.x - W / 2, n.y - H / 2) + n.hw);
+        ring = ring < 0 ? far : ring + (far - ring) * 0.1;
         for (const n of nodes) {
-          n.vx += (W / 2 - n.x) * 0.002;
-          n.vy += (H / 2 - n.y) * 0.002;
+          if (n.degree === 0 && connected.length) {
+            const dx = n.x - W / 2, dy = n.y - H / 2, d = Math.hypot(dx, dy) || 1;
+            const f = (ring + 40 - d) * 0.02;
+            n.vx += (dx / d) * f; n.vy += (dy / d) * f;
+          } else {
+            const k = n.degree > 0 ? 0.004 : 0.002;
+            n.vx += (W / 2 - n.x) * k;
+            n.vy += (H / 2 - n.y) * k;
+          }
           n.x += n.vx * alpha; n.y += n.vy * alpha;
           n.vx *= 0.82; n.vy *= 0.82;
           // Sem prender na tela: o clamp espremia projeto grande contra a
@@ -1475,7 +1523,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         });
         nodes.forEach((n: Json, i: number) => nodeEls[i].setAttribute('transform', `translate(${n.x},${n.y})`));
 
-        alpha *= 0.985;
+        alpha *= decay;
         if (alpha > 0.02) {
           graphSim = requestAnimationFrame(tick);
         } else {
