@@ -1164,6 +1164,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
     const kindColor = (k: string) => KIND_COLORS[k] || '#64748b';
 
     window.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !$('graphNodeModal').classList.contains('hidden')) return closeGraphNodeModal();
       if (ev.key !== 'f' && ev.key !== 'F') return;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
       if ($('graphView')?.classList.contains('hidden')) return;
@@ -1179,6 +1180,8 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       if (!vp) return;
       vp.setAttribute('transform', `translate(${graphView.tx},${graphView.ty}) scale(${graphView.k})`);
       $('graphZoomLabel').innerText = Math.round(graphView.k * 100) + '%';
+      // Abaixo disso o label de 9px fica ilegivel e so sobrepoe: mostra so os hubs.
+      $('graphSvg').classList.toggle('lod', graphView.k < 1.3);
     }
 
     function resetGraphView(svg: SVGSVGElement) {
@@ -1370,9 +1373,33 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         return el;
       });
 
+      const neighbors = new Map<Json, Set<Json>>(nodes.map((n: Json) => [n, new Set([n])]));
+      for (const e of edges) {
+        neighbors.get(e.source)!.add(e.target);
+        neighbors.get(e.target)!.add(e.source);
+      }
+
+      const setHover = (n: Json | null) => {
+        svg.classList.toggle('hovering', !!n);
+        const near = n ? neighbors.get(n)! : null;
+        nodes.forEach((m: Json, i: number) => {
+          const el = nodeEls[i];
+          el.classList.toggle('hl', !!near?.has(m));
+          el.classList.toggle('hover', m === n);
+          // Label cheio so no no sob o mouse; o resto segue truncado.
+          el.querySelector('text')!.textContent = m === n ? m.title : shortTitle(m.title);
+        });
+        edges.forEach((e: Json, i: number) => {
+          edgeEls[i].classList.toggle('hl', !!n && (e.source === n || e.target === n));
+        });
+      };
+      const shortTitle = (s: string) => s.length > 28 ? s.slice(0, 27) + '…' : s;
+
       const nodeEls = nodes.map((n: Json) => {
         const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.style.cursor = 'pointer';
+        g.classList.add('gnode');
+        if (n.degree < 3) g.classList.add('minor');
 
         const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
         c.setAttribute('r', String(radius(n)));
@@ -1387,18 +1414,14 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         t.setAttribute('fill', n.degree === 0 ? '#475569' : '#94a3b8');
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('dy', String(radius(n) + 10));
-        t.textContent = n.title.length > 28 ? n.title.slice(0, 27) + '…' : n.title;
+        t.textContent = shortTitle(n.title);
         g.appendChild(t);
 
-        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        title.textContent = `${n.project}/${n.path}\n${n.kind} · ${n.degree} conexões`;
-        g.appendChild(title);
-
+        g.onmouseenter = () => setHover(n);
+        g.onmouseleave = () => setHover(null);
         g.onclick = () => {
           if (graphView.panned) return;   // arrastou o fundo: nao e clique
-          if (n.external) return openProject(n.workspace, n.project).then(() => loadDoc(n.path));
-          toggleGraphView();
-          loadDoc(n.path);
+          openGraphNodeModal(n);
         };
         gNodes.appendChild(g);
         return g;
@@ -1413,9 +1436,18 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
             const a = nodes[i], b = nodes[j];
             let dx = b.x - a.x, dy = b.y - a.y;
             let d2 = dx * dx + dy * dy || 0.01;
-            if (d2 > 90000) continue;              // longe demais: ignora
-            const f = 900 / d2;
             const d = Math.sqrt(d2);
+            // Colisao: separa na marra quem esta mais perto que os dois raios
+            // mais folga pro label. Repulsao sozinha deixava nos empilhados.
+            const minD = radius(a) + radius(b) + 8;
+            if (d < minD) {
+              const push = (minD - d) / 2 / d;
+              a.x -= dx * push; a.y -= dy * push; b.x += dx * push; b.y += dy * push;
+            }
+            if (d2 > 250000) continue;             // longe demais: ignora
+            // Piso no d²: par nascido quase no mesmo ponto levava um chute de
+            // milhares de px e o fitGraph caia no zoom minimo tentando enquadrar.
+            const f = 800 / Math.max(d2, 400);
             const fx = (dx / d) * f, fy = (dy / d) * f;
             a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
           }
@@ -1423,7 +1455,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
         for (const e of edges) {
           const dx = e.target.x - e.source.x, dy = e.target.y - e.source.y;
           const d = Math.hypot(dx, dy) || 0.01;
-          const f = (d - 70) * 0.02;
+          const f = (d - 60) * 0.02;
           const fx = (dx / d) * f, fy = (dy / d) * f;
           e.source.vx += fx; e.source.vy += fy;
           e.target.vx -= fx; e.target.vy -= fy;
@@ -1433,8 +1465,8 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
           n.vy += (H / 2 - n.y) * 0.002;
           n.x += n.vx * alpha; n.y += n.vy * alpha;
           n.vx *= 0.82; n.vy *= 0.82;
-          n.x = Math.max(20, Math.min(W - 20, n.x));
-          n.y = Math.max(20, Math.min(H - 20, n.y));
+          // Sem prender na tela: o clamp espremia projeto grande contra a
+          // borda. O fitGraph no fim enquadra o que sobrar.
         }
 
         edges.forEach((e: Json, i: number) => {
@@ -1464,6 +1496,40 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       } else {
         tick();
       }
+    }
+
+    let graphSelected: Json = null;
+
+    function openGraphNodeModal(n: Json) {
+      graphSelected = n;
+      const when = (s: string | null) => s ? `${new Date(s).toLocaleString('pt-BR')} · ${timeAgo(s)}` : '—';
+      const rows: [string, string][] = [
+        ['Projeto', `${n.workspace}/${n.project}${n.external ? ' (outro projeto)' : ''}`],
+        ['Caminho', n.path],
+        ['Tipo', n.kind],
+        ['Tier', n.tier || '—'],
+        ['Conexões', String(n.degree)],
+        ['Criado em', when(n.created_at)],
+        ['Atualizado em', when(n.updated_at)]
+      ];
+      $('graphNodeDot').style.background = kindColor(n.kind);
+      $('graphNodeTitle').innerText = n.title;
+      $('graphNodeMeta').innerHTML = rows.map(([k, v]) =>
+        `<dt class="text-slate-500">${k}</dt><dd class="text-slate-300 font-mono break-all">${escapeHtml(v)}</dd>`).join('');
+      $('graphNodeModal').classList.remove('hidden');
+    }
+
+    function closeGraphNodeModal() {
+      $('graphNodeModal').classList.add('hidden');
+    }
+
+    function openGraphNodeDoc() {
+      const n = graphSelected;
+      if (!n) return;
+      closeGraphNodeModal();
+      if (n.external) return openProject(n.workspace, n.project).then(() => loadDoc(n.path));
+      toggleGraphView();
+      loadDoc(n.path);
     }
 
     // Histórico de Sessões

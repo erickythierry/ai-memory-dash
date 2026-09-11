@@ -470,18 +470,21 @@ const server = http.createServer(async (req, res) => {
       };
       const key = (ws: string, pr: string, pa: string) => `${ws}/${pr}/${pa}`;
 
-      for (const p of paths) {
+      paths.forEach((p: Json, i: number) => {
         nodes.set(key(workspace, project, p.path), {
           id: key(workspace, project, p.path),
           workspace, project, path: p.path,
           title: p.title || p.path,
           kind: p.kind || 'note',
           tier: p.tier,
+          // A listagem nao traz created_at; a pagina inteira, ja buscada acima, traz.
+          created_at: pages[i]?.created_at || null,
+          updated_at: pages[i]?.updated_at || p.updated_at || null,
           external: false,
           orphan: false, // recalculado pelo grau depois das arestas
           degree: 0
         });
-      }
+      });
 
       const edges: { from: string; to: string }[] = [];
       const seen = new Set<string>();

@@ -68,6 +68,13 @@
        Some com ele: a lupa ocupa esse canto e Esc continua limpando o campo. */
     input[type="search"]::-webkit-search-cancel-button,
     input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+    /* Grafo: zoom afastado esconde label de no pouco conectado (senao vira
+       sopa de texto); hover acende o no, os vizinhos e as arestas dele. */
+    #graphSvg.lod .gnode.minor text { display: none; }
+    #graphSvg.hovering .gnode.hl text { display: inline; fill: #e2e8f0; }
+    #graphSvg.hovering #gEdges line.hl { stroke: #60a5fa; }
+    #graphSvg .gnode.hover circle { stroke: #f8fafc; stroke-width: 2.5; stroke-dasharray: none; }
+    #graphSvg .gnode.hover text { font-weight: 600; font-size: 11px; }
     /* Tema do editor (CodeMirror `cm-s-aim`), na mesma paleta slate da dash. */
     #docEditor .CodeMirror {
       flex: 1 1 0%; min-height: 0; height: auto;
@@ -522,6 +529,21 @@
       <div class="flex justify-end gap-2 mt-6">
         <button onclick="closeNewDocModal()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg">Cancelar</button>
         <button onclick="createDocSubmit()" class="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg">Criar Página</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal do no do grafo: aberto ao clicar num no -->
+  <div id="graphNodeModal" onclick="if(event.target===this) closeGraphNodeModal()" class="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 w-full max-w-md shadow-xl mx-4">
+      <div class="flex items-start gap-2 mb-3">
+        <span id="graphNodeDot" class="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0"></span>
+        <h3 id="graphNodeTitle" class="text-base font-semibold text-slate-100 break-words"></h3>
+      </div>
+      <dl id="graphNodeMeta" class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs"></dl>
+      <div class="flex justify-end gap-2 mt-5">
+        <button onclick="closeGraphNodeModal()" class="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg">Fechar</button>
+        <button onclick="openGraphNodeDoc()" class="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg">Visualizar</button>
       </div>
     </div>
   </div>
