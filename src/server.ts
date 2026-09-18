@@ -831,6 +831,31 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+let shuttingDown = false;
+
+function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Recebido ${signal}; encerrando servidor HTTP...`);
+
+  // Stop accepting new connections and release keep-alive sockets. The
+  // Docker stop timeout is intentionally short, so do not wait indefinitely
+  // for a request whose upstream dependency may already be going down.
+  server.closeIdleConnections();
+  server.close(() => {
+    console.log('Servidor HTTP encerrado.');
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error('Encerramento forçado após timeout.');
+    process.exit(0);
+  }, 2000).unref();
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
 server.listen(PORT, HOST, () => {
   console.log(`ai-memory-dash rodando em http://${HOST}:${PORT}`);
   console.log(`Conectado ao ai-memory em: ${AI_MEMORY_URL}`);

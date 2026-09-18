@@ -3,6 +3,8 @@ services:
     build: .
     container_name: ai-memory-dash
     restart: unless-stopped
+    # O servidor trata SIGTERM e fecha conexões HTTP antes de sair.
+    stop_grace_period: 3s
     env_file: .env
     environment:
       HOST: 0.0.0.0
