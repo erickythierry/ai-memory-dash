@@ -743,7 +743,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
       btnSave.innerText = 'Salvando...';
 
       try {
-        const res = await fetch('/api/page', {
+        const post = (expected_page_id: string | undefined) => fetch('/api/page', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -752,12 +752,23 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
             path: currentDocPath,
             body: newBody,
             pinned,
-            tier
+            tier,
+            expected_page_id
           })
         });
 
-        const data = await res.json();
+        let res = await post(currentDocData?.page_id);
+        let data = await res.json();
+        if (res.status === 409) {
+          if (!confirm('Esta página mudou no servidor depois que você abriu (aim-sync ou outro agente). Sobrescrever mesmo assim?')) return;
+          res = await post(data.current_page_id);
+          data = await res.json();
+        }
         if (!res.ok || data.error) throw new Error(data.error || 'Falha ao salvar');
+
+        // a escrita gerou versao nova; sem o page_id dela o proximo salvar daria 409
+        const fresh = await fetch(`/api/page?workspace=${encodeURIComponent(currentWorkspace)}&project=${encodeURIComponent(currentProject!)}&path=${encodeURIComponent(currentDocPath)}`);
+        if (fresh.ok) currentDocData.page_id = (await fresh.json())?.page_id;
 
         currentDocData.body = newBody;
         if (!currentDocData.frontmatter) currentDocData.frontmatter = {};

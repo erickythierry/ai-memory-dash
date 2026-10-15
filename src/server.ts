@@ -80,7 +80,8 @@ async function mcpCall(name: string, args: Record<string, unknown>): Promise<Jso
 
   const data = await res.json() as Json;
   if (data.error) {
-    throw new Error(data.error.message || JSON.stringify(data.error));
+    // o `data` carrega o motivo estruturado (ex.: precondition_failed com current_page_id)
+    throw Object.assign(new Error(data.error.message || JSON.stringify(data.error)), { upstream: data.error.data });
   }
 
   // ai-memory retorna resultado como string JSON dentro de data.result.content[0].text
@@ -607,8 +608,20 @@ const server = http.createServer(async (req, res) => {
 
       const writeArgs: Record<string, unknown> = { workspace, project, path: docPath, body: docBody, tier, pinned, tags };
       if (data.scope) writeArgs.scope = data.scope;
+      // Sem isso, salvar sobrescreve calado o que o aim-sync ou um agente gravou
+      // enquanto a pagina estava aberta no editor.
+      if (data.expected_page_id) writeArgs.expected_page_id = data.expected_page_id;
 
-      const result = await mcpCall('memory_write_page', writeArgs);
+      let result: Json;
+      try {
+        result = await mcpCall('memory_write_page', writeArgs);
+      } catch (err) {
+        const upstream = (err as { upstream?: Json }).upstream;
+        if (upstream?.reason !== 'precondition_failed') throw err;
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'precondition_failed', current_page_id: upstream.current_page_id }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, result }));
       return;
